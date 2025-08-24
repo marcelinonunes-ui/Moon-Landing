@@ -2,15 +2,21 @@
 <html lang="pt">
 <head>
   <meta charset="utf-8">
-  <title>Moon Lander — Terreno Amplo + Vários Pads + Modos + PWA</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Moon Lander — Zoom Automático + Vários Pads + Modos + PWA</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
   <meta name="theme-color" content="#0a0f18">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" sizes="192x192">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <style>
     :root { color-scheme: dark; }
-    html,body { margin:0; height:100%; background:#0a0f18; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    html,body {
+      margin:0; height:100%; background:#0a0f18;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      -webkit-user-select: none; user-select: none;           /* evita seleção */
+      -webkit-touch-callout: none;                            /* iOS long-press menu */
+      touch-action: manipulation;                             /* melhora toques */
+    }
     canvas { width:100vw; height:100vh; display:block; background:#060913; outline:none; }
     #btnReset{
       position:fixed; top:10px; right:10px; z-index:10;
@@ -22,6 +28,7 @@
       position:fixed; left:10px; top:10px; z-index:10;
       background:rgba(255,255,255,.08); color:#cfe0ff; border:1px solid rgba(255,255,255,.2);
       padding:6px 10px; border-radius:8px; user-select:none; font-size:12px;
+      -webkit-user-select: none;
     }
   </style>
 </head>
@@ -31,7 +38,7 @@
 <div id="soundTip">Som: <b id="sndState">OFF</b> — tecla <b>S</b></div>
 
 <script>
-/* Moon Lander — Terreno amplo com scroll + vários pads (dificuldades) + modos Arcade/Realista
+/* Moon Lander — Terreno amplo + vários pads + modos Arcade/Realista + ZOOM automático
    Teclas: ←/→ rodar, ↑ motor, P pausa, R reiniciar, S som ON/OFF, M muda modo
 */
 (function(){
@@ -52,11 +59,13 @@ addEventListener('resize', resize, {passive:true}); resize();
 let W = canvas.width / DPR, H = canvas.height / DPR;
 function dims(){ W = canvas.width / DPR; H = canvas.height / DPR; }
 
-/* Foco / bloquear scroll setas */
+/* Foco / bloquear scroll setas / mobile gestures */
 function ensureFocus(){ try{ canvas.focus({preventScroll:true}); }catch(_){} }
 addEventListener('pointerdown', ensureFocus, {passive:true});
 addEventListener('load', ensureFocus);
 addEventListener('keydown', (e)=>{ if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault(); }, {passive:false, capture:true});
+canvas.addEventListener('touchstart', e => { if (e.touches.length > 1) e.preventDefault(); }, {passive:false});
+canvas.addEventListener('gesturestart', e => e.preventDefault()); // iOS
 
 /* ===== Utils ===== */
 const TAU=Math.PI*2, DEG=Math.PI/180;
@@ -69,8 +78,8 @@ function distPointToSeg(px,py,x1,y1,x2,y2){
 }
 
 /* ===== Opções (guardadas) ===== */
-const SAVE_KEY="moonlander_save_v5";
-const OPT_KEY="moonlander_opts_v2";
+const SAVE_KEY="moonlander_save_v6";
+const OPT_KEY="moonlander_opts_v3";
 function getSave(){ try{ return JSON.parse(localStorage.getItem(SAVE_KEY)||"{}"); }catch{ return {}; } }
 function setSave(o){ localStorage.setItem(SAVE_KEY, JSON.stringify(o||{})); }
 function bestLevel(){ return (getSave().best|0); }
@@ -104,18 +113,18 @@ const audio={
   setEnabled(on){ this.enabled=on; sndLbl.textContent=on?'ON':'OFF'; setOpts(Object.assign(opts,{audio:on})); if (!this.started) return; this.master.gain.value=on?0.7:0.0; on?this.musicStart():this.musicStop(); if (!on) this.thruster(false); },
   thruster(on){ if (!this.started||!this.enabled) return; const t=this.ctx.currentTime; this.thrusterGain.gain.cancelScheduledValues(t); this.thrusterGain.gain.linearRampToValueAtTime(on?0.45:0.0,t+0.06); },
   beep(f=740,dur=0.12,type='square',gain=0.35){ if (!this.started||!this.enabled) return; const o=this.ctx.createOscillator(); o.type=type; o.frequency.value=f; const g=this.ctx.createGain(); g.gain.value=gain; o.connect(g); g.connect(this.sfxGain); o.start(); g.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+dur); o.stop(this.ctx.currentTime+dur+0.02); },
-  boom(){ if (!this.started||!this.enabled) return; const n=this.ctx.createBufferSource(); const b=this.ctx.createBuffer(1,this.ctx.sampleRate*0.4|0,this.ctx.sampleRate); const d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length); n.buffer=b; const g=this.ctx.createGain(); g.gain.value=0.7; n.connect(g); g.connect(this.sfxGain); n.start(); n.stop(this.ctx.currentTime+0.41); const o=this.ctx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(220,this.ctx.currentTime); o.frequency.exponentialRampToValueAtTime(70,this.ctx.currentTime+0.4); const og=this.ctx.createGain(); og.gain.value=0.5; o.connect(og); og.connect(this.sfxGain); o.start(); o.stop(this.ctx.currentTime+0.41); },
+  boom(){ if (!this.started||!this.enabled) return; const n=this.ctx.createBufferSource(); const b=this.ctx.createBuffer(1,this.ctx.sampleRate*0.4|0,this.ctx.sampleRate); const d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length); n.buffer=b; const g=this.ctx.createGain(); g.gain.value=0.7; n.connect(g); g.connect(this.sfxGain); n.start(); n.stop(this.ctx.currentTime+0.41);
+    const o=this.ctx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(220,this.ctx.currentTime); o.frequency.exponentialRampToValueAtTime(70,this.ctx.currentTime+0.4);
+    const og=this.ctx.createGain(); og.gain.value=0.5; o.connect(og); og.connect(this.sfxGain); o.start(); o.stop(this.ctx.currentTime+0.41); },
   musicStart(){
     if (!this.started||!this.enabled) return;
     this.musicStop();
-    const scale=[0,2,3,5,7,9,10]; // dórico
+    const scale=[0,2,3,5,7,9,10];
     let step=0; const tempo=108; const beatMs=60000/tempo; const ctx=this.ctx; const root=this.songRootHz;
     const tick=()=>{
-      // baixo suave
       const bass = (opts.mode==='Realista' ? 0.14 : 0.18);
       const bassNote = 55 * Math.pow(2, (scale[(step>>1)%scale.length])/12);
       const oB=ctx.createOscillator(); oB.type='triangle'; oB.frequency.value=bassNote; const gB=ctx.createGain(); gB.gain.value=bass; oB.connect(gB); gB.connect(this.musicGain); oB.start(); gB.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.28); oB.stop(ctx.currentTime+0.3);
-      // lead arpeggio
       const arp=[0,7,12,16]; const idx=(step%8<4)?step%4:7-(step%8); const f = root * Math.pow(2,(arp[idx] + scale[(step)%scale.length])/12);
       const oL=ctx.createOscillator(); oL.type='square'; oL.frequency.value=f; const gL=ctx.createGain(); gL.gain.value=0.16; const fL=ctx.createBiquadFilter(); fL.type='lowpass'; fL.frequency.value=2400; oL.connect(fL); fL.connect(gL); gL.connect(this.musicGain); oL.start(); gL.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.26); oL.stop(ctx.currentTime+0.28);
       if (step%4===0){ const oP=ctx.createOscillator(); oP.type='sawtooth'; oP.frequency.value=root/2 * Math.pow(2, scale[step%scale.length]/12); const gP=ctx.createGain(); gP.gain.value=0.06; oP.connect(gP); gP.connect(this.musicGain); oP.start(); gP.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.55); oP.stop(ctx.currentTime+0.6); }
@@ -133,25 +142,19 @@ document.getElementById('soundTip').addEventListener('click', toggleSound);
 const particles=[];
 function addParticle(x,y,vx,vy,life,size,color,grav=0){ particles.push({x,y,vx,vy,life,age:0,size,color,grav}); }
 function updateParticles(dt){ for(let i=particles.length-1;i>=0;i--){ const p=particles[i]; p.age+=dt; if(p.age>=p.life){ particles.splice(i,1); continue; } p.vy+=p.grav*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; } }
-function drawParticles(camX){ for(const p of particles){ const t=1-p.age/p.life; ctx.globalAlpha=clamp(t,0,1); ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x-camX, p.y, Math.max(0.2,p.size*t), 0, TAU); ctx.fill(); } ctx.globalAlpha=1; }
+function drawParticles(){ for(const p of particles){ const t=1-p.age/p.life; ctx.globalAlpha=clamp(t,0,1); ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.2,p.size*t), 0, TAU); ctx.fill(); } ctx.globalAlpha=1; }
 
 /* ===== Mundo / Terreno ===== */
 let terrain=[]; // [{x,y}] coords do mundo
 let pads=[];    // [{x,w,top,safeSpeed,safeAngle,label,color}]
 const PAD_H=8, GROUND_MARGIN=28;
-let worldW=2000; // largura do mundo (scroll)
-function midpointTerrain(numPts, baselineY, amp, span){
-  const pts = new Array(numPts).fill(0).map((_,i)=>({x: i*(span/(numPts-1)), y: baselineY}));
-  function displace(a,b,disp){
-    if (b<=a+1) return;
-    const m=(a+b)>>1, ya=pts[a].y, yb=pts[b].y;
-    pts[m].y=(ya+yb)/2 + rnd(-disp, disp);
-    displace(a,m, disp*0.55); displace(m,b, disp*0.55);
-  }
-  const last=numPts-1;
-  pts[0].y=baselineY+rnd(-amp*0.3,amp*0.3); pts[last].y=baselineY+rnd(-amp*0.3,amp*0.3);
-  displace(0,last,amp);
-  for(let k=0;k<2;k++) for(let i=1;i<pts.length-1;i++) pts[i].y=(pts[i-1].y+pts[i].y+pts[i+1].y)/3;
+let worldW=2000;
+function midpointTerrain(n, baselineY, amp, span){
+  const pts=new Array(n).fill(0).map((_,i)=>({x: i*(span/(n-1)), y: baselineY}));
+  function displace(a,b,disp){ if (b<=a+1) return; const m=(a+b)>>1, ya=pts[a].y, yb=pts[b].y; pts[m].y=(ya+yb)/2 + rnd(-disp,disp); displace(a,m,disp*0.55); displace(m,b,disp*0.55); }
+  pts[0].y=baselineY+rnd(-amp*0.3,amp*0.3); pts[n-1].y=baselineY+rnd(-amp*0.3,amp*0.3);
+  displace(0,n-1,amp);
+  for(let k=0;k<2;k++) for(let i=1;i<n-1;i++) pts[i].y=(pts[i-1].y+pts[i].y+pts[i+1].y)/3;
   for(const p of pts) p.y=clamp(p.y, H*0.35, H-GROUND_MARGIN);
   return pts;
 }
@@ -168,19 +171,15 @@ function buildWorld(level){
   terrain = midpointTerrain( Math.max(28, Math.floor(worldW/80)), baseline, amp, worldW );
   pads.length=0;
   const padCount = 3 + (level.idx>10?1:0);
-  const slots = [];
-  for(let i=0;i<padCount;i++){
-    slots.push( lerp(0.12,0.88, i/(padCount-1) ) );
-  }
+  const slots = []; for(let i=0;i<padCount;i++) slots.push( lerp(0.12,0.88, i/(padCount-1)) );
   for(const s of slots){
-    const cx = s*worldW;
-    const t = Math.random();
-    const diff = (t<0.45) ? 'Fácil' : (t<0.8 ? 'Médio' : 'Difícil');
+    const cx=s*worldW, t=Math.random();
+    const diff=(t<0.45)?'Fácil':(t<0.8?'Médio':'Difícil');
     const wBase = diff==='Fácil' ? lerp(220,180, level.t) : diff==='Médio' ? lerp(160,120, level.t) : lerp(110,70, level.t);
-    const padW = Math.round(wBase);
-    const pr = carvePadRange(terrain, clamp(cx - padW/2, 40, worldW-40-padW), padW);
-    const safeSpeed = Math.round( (diff==='Fácil'? 95: diff==='Médio'? 70: 45) - level.t*15 );
-    const safeAngle = Math.round( (diff==='Fácil'? 18: diff==='Médio'? 12: 8) - level.t*3 );
+    const padW=Math.round(wBase);
+    const pr=carvePadRange(terrain, clamp(cx - padW/2, 40, worldW-40-padW), padW);
+    const safeSpeed=Math.round((diff==='Fácil'?95:diff==='Médio'?70:45) - level.t*15);
+    const safeAngle=Math.round((diff==='Fácil'?18:diff==='Médio'?12:8) - level.t*3);
     const color = diff==='Fácil' ? "#3be0a0" : diff==='Médio' ? "#ffd95a" : "#ff9b5a";
     pads.push({ x:pr.x, w:pr.w, top:pr.y, safeSpeed, safeAngle, label:diff, color });
   }
@@ -210,16 +209,10 @@ function updateMeteorites(dt,L){
     if (m.y>H+80) m.alive=false;
   }
 }
-function drawMeteorites(camX){
-  for(const m of meteorites){
-    ctx.save(); ctx.translate(m.x-camX, m.y); ctx.rotate(m.ang);
-    ctx.fillStyle="#8a7f7a"; ctx.strokeStyle="#5c5350"; ctx.lineWidth=1;
-    ctx.beginPath();
-    for(let i=0;i<7;i++){ const a=i/7*TAU; const rr=m.r*(0.9+0.2*Math.sin(i*1.7)); const px=Math.cos(a)*rr, py=Math.sin(a)*rr; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py); }
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.restore();
-  }
-}
+function drawMeteorites(){ for(const m of meteorites){ ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(m.ang);
+  ctx.fillStyle="#8a7f7a"; ctx.strokeStyle="#5c5350"; ctx.lineWidth=1;
+  ctx.beginPath(); for(let i=0;i<7;i++){ const a=i/7*TAU, rr=m.r*(0.9+0.2*Math.sin(i*1.7)); const px=Math.cos(a)*rr, py=Math.sin(a)*rr; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py); }
+  ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); } }
 
 /* ===== Nave / Física ===== */
 const SHIP_R=14;
@@ -228,49 +221,68 @@ const BASE_THRUST=185;
 const FUEL_BURN=12;
 
 const ship={ x:0,y:0,vx:0,vy:0,ang:0,angVel:0,left:false,right:false,thrust:false,fuel:100, alive:true };
-let camX=0;
 
-function drawShip(camX_){
-  ctx.save();
-  ctx.translate(ship.x-camX_, ship.y);
-  ctx.rotate(ship.ang);
+/* ===== CÂMARA com ZOOM ===== */
+const cam = {
+  x:0, y:0, scale:1, targetScale:1,
+  min:0.65, max:1.5,
+  apply(){ ctx.save(); ctx.scale(this.scale, this.scale); ctx.translate(-this.x, -this.y); },
+  restore(){ ctx.restore(); }
+};
 
-  const s=1.0, t=time;
-  // sombra
-  ctx.save(); ctx.globalAlpha=0.18; ctx.fillStyle="#000"; ctx.beginPath(); ctx.ellipse(0,16*s,14*s,4*s,0,0,TAU); ctx.fill(); ctx.restore();
-  // chama
-  if (ship.thrust && state===STATES.PLAY && ship.fuel>0){
-    const len=18+Math.sin(t*50)*4;
-    ctx.globalAlpha=0.25; ctx.fillStyle="#ffb84d"; ctx.beginPath(); ctx.ellipse(0, 10+len*0.6, 7, len*0.8, 0,0,TAU); ctx.fill(); ctx.globalAlpha=1;
-    ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(-6,10+len); ctx.lineTo(6,10+len); ctx.closePath(); ctx.fillStyle="#ff9a1f"; ctx.fill();
-    ctx.globalAlpha=0.75; ctx.fillStyle="#ffd76a"; ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(-3,10+len*0.65); ctx.lineTo(3,10+len*0.65); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
+// calcula targetScale: afasta quando longe de pads, aproxima quando perto
+function computeCamera(dt){
+  // seguir posição
+  const viewW = W / cam.scale, viewH = H / cam.scale;
+
+  // alvo base: centro na nave
+  let targetX = ship.x - viewW*0.5;
+  let targetY = ship.y - viewH*0.45;
+
+  // zoom em função da proximidade a um pad
+  let nearest = null, bestD = Infinity;
+  for (const p of pads){
+    const cx = p.x + p.w/2, cy = p.top;
+    const dx = Math.abs(ship.x - cx);
+    const dy = Math.abs(ship.y - (cy-20));
+    const d = dx + dy*0.7; // métrica simples
+    if (d < bestD){ bestD = d; nearest = p; }
   }
-  // sino
-  let gBell=ctx.createLinearGradient(0,8,0,18); gBell.addColorStop(0,"#9aa6bf"); gBell.addColorStop(1,"#5f6b86");
-  ctx.fillStyle=gBell; ctx.beginPath(); ctx.moveTo(-8*s,10*s); ctx.lineTo(-6*s,18*s); ctx.lineTo(6*s,18*s); ctx.lineTo(8*s,10*s); ctx.closePath(); ctx.fill();
-  // pernas
-  const spring=Math.sin(t*6)*0.6; ctx.lineWidth=2; ctx.strokeStyle="#c2cce0";
-  ctx.beginPath(); ctx.moveTo(-8*s,9*s); ctx.lineTo(-14*s,(14+spring)*s); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(8*s,9*s);  ctx.lineTo(14*s,(14+spring)*s); ctx.stroke();
-  ctx.lineWidth=2.2; ctx.beginPath(); ctx.moveTo(-16*s,(14+spring)*s); ctx.lineTo(-10*s,(14+spring)*s); ctx.moveTo(10*s,(14+spring)*s); ctx.lineTo(16*s,(14+spring)*s); ctx.stroke();
-  // cápsula
-  let gHull=ctx.createLinearGradient(-10,-16,12,12); gHull.addColorStop(0,"#e9f3ff"); gHull.addColorStop(0.55,"#cfdcf5"); gHull.addColorStop(1,"#a7b7d8");
-  ctx.fillStyle=gHull; ctx.strokeStyle="#7e8eae"; ctx.lineWidth=1.6;
-  ctx.beginPath(); ctx.moveTo(0,-16*s); ctx.lineTo(11*s,10*s); ctx.lineTo(-11*s,10*s); ctx.closePath(); ctx.fill(); ctx.stroke();
-  // cúpula
-  let gDome=ctx.createRadialGradient(-3,-8,1,0,-8,8); gDome.addColorStop(0,"#b7ecff"); gDome.addColorStop(1,"#6fb9d6");
-  ctx.fillStyle=gDome; ctx.beginPath(); ctx.arc(0,-8*s,5.2*s,0,TAU); ctx.fill();
-  ctx.globalAlpha=0.35; ctx.fillStyle="#fff"; ctx.beginPath(); ctx.ellipse(-2.5*s,-10*s,2.2*s,1.1*s,-0.6,0,TAU); ctx.fill(); ctx.globalAlpha=1;
-  // antena + luzes
-  ctx.strokeStyle="#9fb3d6"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(0,-16*s); ctx.lineTo(0,-20*s); ctx.stroke();
-  ctx.fillStyle="#ff4d6d"; ctx.beginPath(); ctx.arc(0,-22*s,1.6*s,0,TAU); ctx.fill();
-  ctx.fillStyle="#44ff99"; ctx.beginPath(); ctx.arc(-7*s,2*s,1.6*s,0,TAU); ctx.fill();
-  ctx.fillStyle="#ffaa33"; ctx.beginPath(); ctx.arc(7*s,2*s,1.6*s,0,TAU); ctx.fill();
-  ctx.restore();
+
+  // alvo de escala
+  // longe de pads -> ver amplo (0.75~0.9) ; perto -> aproximar (1.2~1.4)
+  let tScale;
+  if (nearest){
+    const dx = Math.abs(ship.x - (nearest.x + nearest.w/2));
+    const dy = Math.abs(ship.y - nearest.top);
+    const norm = clamp( (dx+dy*0.7) / 420, 0, 1); // 0 perto, 1 longe
+    const farScale = 0.8;      // afastado
+    const nearScale = 1.35;    // aproximado
+    tScale = lerp(nearScale, farScale, norm);
+  } else {
+    tScale = 0.85;
+  }
+
+  // também afasta se nave for muito rápida (contexto situacional)
+  const speed = Math.hypot(ship.vx, ship.vy);
+  const speedBoost = clamp((speed-120)/180, 0, 0.25); // até +25% afastamento
+  tScale = tScale * (1 - speedBoost);
+
+  cam.targetScale = clamp(tScale, cam.min, cam.max);
+  cam.scale = lerp(cam.scale, cam.targetScale, 0.04);
+
+  // recomputar dimensões com nova escala
+  const vW = W / cam.scale, vH = H / cam.scale;
+  targetX = clamp(ship.x - vW*0.5, 0, Math.max(0, worldW - vW));
+  // seguir vertical com suavidade (mundo tem limites superior/inferior “virtuais”)
+  targetY = clamp(ship.y - vH*0.45, 0, Math.max(0, H - vH));
+
+  cam.x = lerp(cam.x, targetX, 0.08);
+  cam.y = lerp(cam.y, targetY, 0.10);
 }
 
 /* ===== Estados / Níveis ===== */
-const STATES={ MENU:0, PLAY:1, CRASH:2, LAND:3, PAUSE:4, OVER:5 };
+const STATES={ MENU:0, PLAY:1, CRASH:2, LAND:3, PAUSE:4, OVER:5, LEVELSEL:6 };
 let state=STATES.MENU;
 
 const LEVELS_TOTAL=20;
@@ -324,15 +336,17 @@ function loadLevel(i){
   ship.vx=ship.vy=0; ship.ang=0; ship.angVel=0; ship.fuel=currentLevel.fuel; ship.alive=true;
   time=0; wind=0; meteorites.length=0; meteorTimer=0; particles.length=0;
   buildWorld(currentLevel);
-  camX=clamp(ship.x - W*0.5, 0, Math.max(0, worldW - W));
+  cam.x = clamp(ship.x - (W/cam.scale)*0.5, 0, Math.max(0, worldW - W/cam.scale));
+  cam.y = clamp(ship.y - (H/cam.scale)*0.45, 0, Math.max(0, H - H/cam.scale));
 }
-function restartLevel(){ if (!currentLevel) return startGame(0); loadLevel(cur); state=STATES.PLAY; }
-document.getElementById('btnReset').addEventListener('click', restartLevel);
 
 /* ===== Controlo ===== */
+document.getElementById('btnReset').addEventListener('click', ()=>{ if (state===STATES.MENU) { startFromMenuDefault(); } else { restartLevel(); } });
+function restartLevel(){ if (!currentLevel) return startGame(0); loadLevel(cur); state=STATES.PLAY; }
+
 addEventListener('keydown', (e)=>{
   if (e.repeat) return;
-  if (state===STATES.MENU){
+  if (state===STATES.MENU || state===STATES.LEVELSEL){
     if (e.key===' '||e.key==='Enter'||e.key==='ArrowUp'){ startFromMenuDefault(); }
     if (e.key.toLowerCase()==='m'){ toggleMode(); drawMenu(); }
     if (e.key.toLowerCase()==='s'){ toggleSound(); }
@@ -383,23 +397,14 @@ function update(dt){
   const L=currentLevel;
   const windTarget=Math.sin(time*(TAU/L.windPeriod))*L.windMax; wind=lerp(wind, windTarget, 0.03);
 
-  // rotação
-  if (opts.mode==='Arcade'){
-    if (ship.left) ship.ang -= ROT_SPEED*dt;
-    if (ship.right) ship.ang += ROT_SPEED*dt;
-  } else {
-    const torque = (ship.right?1:0) - (ship.left?1:0);
-    ship.angVel += torque*2.8*DEG;
-    ship.angVel *= 0.985;
-    ship.ang += ship.angVel;
-  }
+  if (opts.mode==='Arcade'){ if (ship.left) ship.ang -= ROT_SPEED*dt; if (ship.right) ship.ang += ROT_SPEED*dt; }
+  else { const torque=(ship.right?1:0)-(ship.left?1:0); ship.angVel += torque*2.8*DEG; ship.angVel*=0.985; ship.ang+=ship.angVel; }
 
-  // empuxo
   let thrustAcc=0;
   if (ship.thrust && ship.fuel>0){
-    const thrustMult = (opts.mode==='Realista') ? 0.92 : 1.0;
-    thrustAcc = BASE_THRUST*thrustMult;
-    const burn = FUEL_BURN * (opts.mode==='Realista'?1.15:1.0);
+    const thrustMult=(opts.mode==='Realista')?0.92:1.0;
+    thrustAcc=BASE_THRUST*thrustMult;
+    const burn=FUEL_BURN*(opts.mode==='Realista'?1.15:1.0);
     ship.fuel=Math.max(0, ship.fuel - burn*dt);
     for(let k=0;k<3;k++){
       const a=ship.ang+Math.PI+rnd(-0.18,0.18); const sp=rnd(70,140);
@@ -408,18 +413,17 @@ function update(dt){
     }
   }
 
-  // física translacional
   const ax=Math.sin(ship.ang)*thrustAcc + wind/1.0;
   const ay=-Math.cos(ship.ang)*thrustAcc + L.gravity;
   ship.vx+=ax*dt; ship.vy+=ay*dt;
   ship.x+=ship.vx*dt; ship.y+=ship.vy*dt;
 
-  // limites do mundo
+  // limites horizontais do mundo
   if (ship.x<0){ ship.x=0; ship.vx=0; }
   if (ship.x>worldW){ ship.x=worldW; ship.vx=0; }
 
-  // câmara
-  camX = clamp(ship.x - W*0.5, 0, Math.max(0, worldW - W));
+  // câmara/zoom
+  computeCamera(dt);
 
   // aterragem (pads)
   if (ship.vy>0){
@@ -429,9 +433,7 @@ function update(dt){
         const speed=Math.hypot(ship.vx, ship.vy);
         const angleErr=Math.abs((ship.ang%TAU+TAU)%TAU);
         const upright=Math.min(angleErr, Math.abs(TAU-angleErr))*(180/Math.PI);
-        const velOK = speed <= p.safeSpeed;
-        const angOK = upright <= p.safeAngle;
-        if (velOK && angOK){
+        if (speed <= p.safeSpeed && upright <= p.safeAngle){
           land(p);
           for(let k=0;k<16;k++){ const a=rnd(-Math.PI,0), sp=rnd(20,80); addParticle(ship.x+rnd(-10,10), p.top+PAD_H, Math.cos(a)*sp, Math.sin(a)*sp*0.4, rnd(0.3,0.7), rnd(1.5,3), "#cbbba0", 120); }
           return;
@@ -446,7 +448,6 @@ function update(dt){
     if (distPointToSeg(ship.x, ship.y, a.x,a.y, b.x,b.y) <= SHIP_R){ crash(); return; }
   }
 
-  // meteoritos
   updateMeteorites(dt, L);
 
   ship.vx=clamp(ship.vx,-1000,1000); ship.vy=clamp(ship.vy,-1000,1000);
@@ -471,9 +472,13 @@ function drawSpaceBg(){ const g=ctx.createLinearGradient(0,0,0,H); g.addColorSto
   for(let i=0;i<60;i++){ ctx.fillRect(R()*W, 40+R()*H*0.35, 1,1); } ctx.globalAlpha=1; }
 function roundRect(x,y,w,h,r){ const rr=Math.min(r,Math.abs(w)/2,Math.abs(h)/2); ctx.beginPath(); ctx.moveTo(x+rr,y); ctx.arcTo(x+w,y, x+w,y+h, rr); ctx.arcTo(x+w,y+h,x,y+h,rr); ctx.arcTo(x,y+h,x,y,rr); ctx.arcTo(x,y,x+w,y,rr); ctx.closePath(); }
 
-function drawTerrain(camX_){
-  ctx.save();
-  ctx.translate(-camX_, 0);
+function withCamera(drawFn){
+  cam.apply();
+  drawFn();
+  cam.restore();
+}
+
+function drawTerrain(){
   ctx.fillStyle="#1e2433"; ctx.beginPath(); ctx.moveTo(0,H);
   for(const p of terrain) ctx.lineTo(p.x, p.y);
   ctx.lineTo(worldW, H); ctx.closePath(); ctx.fill();
@@ -488,6 +493,36 @@ function drawTerrain(camX_){
     ctx.fillStyle="#cfe0ff"; ctx.font="12px system-ui"; ctx.textAlign="center";
     ctx.fillText(`${p.label} — Vel ≤ ${p.safeSpeed} | Âng ≤ ${p.safeAngle}°`, p.x+p.w/2, p.top-10);
   }
+}
+
+function drawMeteoritesCam(){ drawMeteorites(); }
+
+function drawShip(){
+  ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.ang);
+  const s=1.0, t=time;
+  ctx.save(); ctx.globalAlpha=0.18; ctx.fillStyle="#000"; ctx.beginPath(); ctx.ellipse(0,16*s,14*s,4*s,0,0,TAU); ctx.fill(); ctx.restore();
+  if (ship.thrust && state===STATES.PLAY && ship.fuel>0){
+    const len=18+Math.sin(t*50)*4;
+    ctx.globalAlpha=0.25; ctx.fillStyle="#ffb84d"; ctx.beginPath(); ctx.ellipse(0, 10+len*0.6, 7, len*0.8, 0,0,TAU); ctx.fill(); ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(-6,10+len); ctx.lineTo(6,10+len); ctx.closePath(); ctx.fillStyle="#ff9a1f"; ctx.fill();
+    ctx.globalAlpha=0.75; ctx.fillStyle="#ffd76a"; ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(-3,10+len*0.65); ctx.lineTo(3,10+len*0.65); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
+  }
+  let gBell=ctx.createLinearGradient(0,8,0,18); gBell.addColorStop(0,"#9aa6bf"); gBell.addColorStop(1,"#5f6b86");
+  ctx.fillStyle=gBell; ctx.beginPath(); ctx.moveTo(-8*s,10*s); ctx.lineTo(-6*s,18*s); ctx.lineTo(6*s,18*s); ctx.lineTo(8*s,10*s); ctx.closePath(); ctx.fill();
+  const spring=Math.sin(t*6)*0.6; ctx.lineWidth=2; ctx.strokeStyle="#c2cce0";
+  ctx.beginPath(); ctx.moveTo(-8*s,9*s); ctx.lineTo(-14*s,(14+spring)*s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(8*s,9*s);  ctx.lineTo(14*s,(14+spring)*s); ctx.stroke();
+  ctx.lineWidth=2.2; ctx.beginPath(); ctx.moveTo(-16*s,(14+spring)*s); ctx.lineTo(-10*s,(14+spring)*s); ctx.moveTo(10*s,(14+spring)*s); ctx.lineTo(16*s,(14+spring)*s); ctx.stroke();
+  let gHull=ctx.createLinearGradient(-10,-16,12,12); gHull.addColorStop(0,"#e9f3ff"); gHull.addColorStop(0.55,"#cfdcf5"); gHull.addColorStop(1,"#a7b7d8");
+  ctx.fillStyle=gHull; ctx.strokeStyle="#7e8eae"; ctx.lineWidth=1.6;
+  ctx.beginPath(); ctx.moveTo(0,-16*s); ctx.lineTo(11*s,10*s); ctx.lineTo(-11*s,10*s); ctx.closePath(); ctx.fill(); ctx.stroke();
+  let gDome=ctx.createRadialGradient(-3,-8,1,0,-8,8); gDome.addColorStop(0,"#b7ecff"); gDome.addColorStop(1,"#6fb9d6");
+  ctx.fillStyle=gDome; ctx.beginPath(); ctx.arc(0,-8*s,5.2*s,0,TAU); ctx.fill();
+  ctx.globalAlpha=0.35; ctx.fillStyle="#fff"; ctx.beginPath(); ctx.ellipse(-2.5*s,-10*s,2.2*s,1.1*s,-0.6,0,TAU); ctx.fill(); ctx.globalAlpha=1;
+  ctx.strokeStyle="#9fb3d6"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(0,-16*s); ctx.lineTo(0,-20*s); ctx.stroke();
+  ctx.fillStyle="#ff4d6d"; ctx.beginPath(); ctx.arc(0,-22*s,1.6*s,0,TAU); ctx.fill();
+  ctx.fillStyle="#44ff99"; ctx.beginPath(); ctx.arc(-7*s,2*s,1.6*s,0,TAU); ctx.fill();
+  ctx.fillStyle="#ffaa33"; ctx.beginPath(); ctx.arc(7*s,2*s,1.6*s,0,TAU); ctx.fill();
   ctx.restore();
 }
 
@@ -495,17 +530,17 @@ function drawHUD(){
   const speed=Math.hypot(ship.vx,ship.vy);
   const angleErr=Math.abs((ship.ang%TAU+TAU)%TAU);
   const upright=Math.min(angleErr, Math.abs(TAU-angleErr))*(180/Math.PI);
-  ctx.globalAlpha=0.85; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(12,12,390,118,10); ctx.fill(); ctx.globalAlpha=1;
+  ctx.globalAlpha=0.85; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(12,12,430,118,10); ctx.fill(); ctx.globalAlpha=1;
   ctx.fillStyle="#cfe0ff"; ctx.font="14px system-ui";
-  ctx.fillText(`${currentLevel ? currentLevel.name : "—"} — Modo: ${opts.mode} — Som: ${audio.enabled?'ON':'OFF'}`, 20, 32);
+  ctx.fillText(`${currentLevel ? currentLevel.name : "—"} — Modo: ${opts.mode} — Som: ${audio.enabled?'ON':'OFF'} — Zoom: ${cam.scale.toFixed(2)}×`, 20, 32);
   ctx.fillStyle="#9ab0d6";
   ctx.fillText("Vel: " + speed.toFixed(1) + " px/s", 20, 54);
   ctx.fillText("Ângulo: " + upright.toFixed(1) + "°", 20, 74);
   ctx.fillText("Comb.: " + (ship.fuel|0), 20, 94);
   ctx.fillText("Meteors: " + meteorites.length, 160, 94);
   if(currentLevel){
-    ctx.fillStyle="#73f3b1"; ctx.fillText("Lim. base Vel: " + currentLevel.baseSpeed + " px/s", 200, 54);
-    ctx.fillStyle="#73f3b1"; ctx.fillText("Lim. base Âng: " + currentLevel.baseAngle + "°", 200, 74);
+    ctx.fillStyle="#73f3b1"; ctx.fillText("Lim. base Vel: " + currentLevel.baseSpeed + " px/s", 240, 54);
+    ctx.fillStyle="#73f3b1"; ctx.fillText("Lim. base Âng: " + currentLevel.baseAngle + "°", 240, 74);
   }
   drawMiniMap();
 }
@@ -513,12 +548,8 @@ function drawMiniMap(){
   const mw=Math.min(W-24, 280), mh=40, x= W - mw - 12, y=12;
   ctx.globalAlpha=0.85; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(x,y,mw,mh,8); ctx.fill(); ctx.globalAlpha=1;
   ctx.fillStyle="#2a3248"; roundRect(x+8,y+mh/2-3,mw-16,6,3); ctx.fill();
-  for(const p of pads){
-    const px = x+8 + (p.x/worldW)*(mw-16);
-    ctx.fillStyle=p.color; ctx.fillRect(px-2, y+mh/2-6, 4, 12);
-  }
-  const sx = x+8 + (ship.x/worldW)*(mw-16);
-  ctx.fillStyle="#bcd3ff"; ctx.beginPath(); ctx.arc(sx, y+mh/2, 4, 0, TAU); ctx.fill();
+  for(const p of pads){ const px = x+8 + (p.x/worldW)*(mw-16); ctx.fillStyle=p.color; ctx.fillRect(px-2, y+mh/2-6, 4, 12); }
+  const sx = x+8 + (ship.x/worldW)*(mw-16); ctx.fillStyle="#bcd3ff"; ctx.beginPath(); ctx.arc(sx, y+mh/2, 4, 0, TAU); ctx.fill();
 }
 
 function drawTouchButtons(){
@@ -542,16 +573,17 @@ function drawPadOverlay(){
   if (state===STATES.OVER)  overlay("Concluíste todos os níveis! 🏁","Prima R para recomeçar.");
 }
 
-/* ===== Menu ===== */
+/* ===== Menus ===== */
 let menuButtons=[];
 function drawMenu(){
   drawSpaceBg(); drawMenuTitle();
-  const btnW=Math.min(420, W*0.85), btnH=46, gap=12, cx=W/2-btnW/2; let cy=H/2-130; menuButtons=[];
+  const btnW=Math.min(460, W*0.85), btnH=46, gap=12, cx=W/2-btnW/2; let cy=H/2-160; menuButtons=[];
   addButton(cx,cy,btnW,btnH,"▶ Novo Jogo",()=>startGame(0)); cy+=btnH+gap;
   const best=bestLevel(); if (best>0){ addButton(cx,cy,btnW,btnH,`⏩ Continuar (Nível ${best+1})`,()=>startGame(best)); cy+=btnH+gap; }
   addButton(cx,cy,btnW,btnH,`🎮 Modo: ${opts.mode} (M)`,()=>{ toggleMode(); drawMenu(); }); cy+=btnH+gap;
+  addButton(cx,cy,btnW,btnH,"📜 Selecionar Nível",()=>{ state=STATES.LEVELSEL; render(); }); cy+=btnH+gap;
   addButton(cx,cy,btnW,btnH,"🔊 Som: ON/OFF (S)", ()=>toggleSound()); cy+=btnH+gap;
-  addButton(cx,cy,btnW,btnH,"🧹 Limpar Progresso", ()=>{ localStorage.removeItem(SAVE_KEY); drawMenu(); });
+  addButton(cx,cy,btnW,btnH,"🧹 Limpar Progresso", ()=>{ localStorage.removeItem(SAVE_KEY); render(); });
   for(const b of menuButtons){ ctx.globalAlpha=0.9; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(b.x,b.y,b.w,b.h,10); ctx.fill();
     ctx.globalAlpha=1; ctx.strokeStyle="rgba(255,255,255,0.2)"; ctx.lineWidth=1.5; roundRect(b.x,b.y,b.w,b.h,10); ctx.stroke();
     ctx.fillStyle="#cfe0ff"; ctx.font="16px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(b.label, b.x+b.w/2, b.y+b.h/2);
@@ -562,25 +594,75 @@ function drawMenu(){
 function drawMenuTitle(){
   ctx.fillStyle="#e7f0ff"; ctx.textAlign="center"; ctx.font="bold 42px system-ui"; ctx.fillText("MOON LANDER", W/2, 110);
   ctx.font="18px system-ui"; ctx.fillStyle="#9ab0d6";
-  ctx.fillText("Terreno amplo com múltiplos locais de aterragem e dificuldades", W/2, 138);
+  ctx.fillText("Zoom automático, terreno amplo e vários locais de aterragem", W/2, 138);
 }
+function drawLevelSelect(){
+  drawSpaceBg();
+  ctx.fillStyle="#e7f0ff"; ctx.textAlign="center"; ctx.font="bold 32px system-ui"; ctx.fillText("Selecionar Nível", W/2, 100);
+  const cols = Math.max(3, Math.min(6, Math.floor(W/120)));
+  const cellW = Math.min(140, (W-80)/cols), cellH=50, gap=12;
+  const rows = Math.ceil(LEVELS_TOTAL/cols);
+  const totalH = rows*cellH + (rows-1)*gap;
+  let x0 = (W - (cols*cellW + (cols-1)*gap))/2;
+  let y0 = 140 + Math.max(0,(H-200-totalH)/2);
+  const best = bestLevel();
+  let n=0;
+  levelButtons.length=0;
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      n++;
+      if (n>LEVELS_TOTAL) break;
+      const x = x0 + c*(cellW+gap), y = y0 + r*(cellH+gap);
+      const unlocked = (n-1) <= best;
+      levelButtons.push({x,y,w:cellW,h:cellH, idx:n-1, unlocked});
+      ctx.globalAlpha=0.9; ctx.fillStyle= unlocked ? "rgba(6,9,19,0.6)" : "rgba(6,9,19,0.35)";
+      roundRect(x,y,cellW,cellH,10); ctx.fill();
+      ctx.globalAlpha=1; ctx.strokeStyle="rgba(255,255,255,0.25)"; ctx.lineWidth=1.5; roundRect(x,y,cellW,cellH,10); ctx.stroke();
+      ctx.fillStyle= unlocked ? "#cfe0ff" : "#7f8cab"; ctx.font="16px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText(`Nível ${n}`, x+cellW/2, y+cellH/2);
+    }
+  }
+  // voltar
+  ctx.fillStyle="#9ab0d6"; ctx.font="14px system-ui"; ctx.textAlign="center";
+  ctx.fillText("Clique/toque num nível desbloqueado • Esc/Voltar para o menu", W/2, H-30);
+}
+let menuButtons=[], levelButtons=[];
 function addButton(x,y,w,h,label,action){ menuButtons.push({x,y,w,h,label,action}); }
-canvas.onclick=(e)=>{ if(state!==STATES.MENU && state!==STATES.LAND) return;
+canvas.onclick=(e)=>{
   const rect=canvas.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
-  if (state===STATES.MENU){ for(const b of menuButtons){ if(x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h){ b.action(); return; } } startFromMenuDefault(); }
-  else if (state===STATES.LAND){ nextLevel(); }
+  if (state===STATES.MENU){
+    for(const b of menuButtons){ if(x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h){ b.action(); return; } }
+    startFromMenuDefault();
+  } else if (state===STATES.LEVELSEL){
+    for(const b of levelButtons){
+      if(x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h && b.unlocked){ startGame(b.idx); return; }
+    }
+    state=STATES.MENU; render();
+  } else if (state===STATES.LAND){
+    nextLevel();
+  }
 };
+addEventListener('keydown', (e)=>{ if (state===STATES.LEVELSEL && e.key==='Escape'){ state=STATES.MENU; render(); }});
 function startFromMenuDefault(){ const best=bestLevel(); startGame(best>0?best:0); }
 function nextLevel(){ cur++; if(cur>=levels.length){ state=STATES.OVER; } else { loadLevel(cur); state=STATES.PLAY; } }
 
 /* ===== Render principal ===== */
 function render(){
   if (state===STATES.MENU){ drawMenu(); return; }
+  if (state===STATES.LEVELSEL){ drawLevelSelect(); return; }
+
+  // fundo sem câmara
   drawSpaceBg();
-  drawTerrain(camX);
-  drawMeteorites(camX);
-  drawShip(camX);
-  drawParticles(camX);
+
+  // mundo com câmara (zoom + pan)
+  withCamera(()=>{
+    drawTerrain();
+    drawMeteoritesCam();
+    drawShip();
+    drawParticles();
+  });
+
+  // HUD fixo
   drawHUD();
   drawTouchButtons();
   drawPadOverlay();
@@ -589,12 +671,6 @@ function render(){
 /* ===== Start ===== */
 state=STATES.MENU;
 drawMenu();
-
-/* ===== Helpers visuais ===== */
-function drawSpaceBg(){ const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,"#060913"); g.addColorStop(1,"#0b0f1a"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  const seed=4321; let s=seed; const R=()=> (s=(s*9301+49297)%233280)/233280; ctx.globalAlpha=0.7; ctx.fillStyle="#bcd3ff";
-  for(let i=0;i<60;i++){ ctx.fillRect(R()*W, 40+R()*H*0.35, 1,1); } ctx.globalAlpha=1;
-}
 
 })(); // IIFE
 </script>
