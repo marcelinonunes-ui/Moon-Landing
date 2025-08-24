@@ -1,12 +1,19 @@
 {
-  "name": "Moon Lander — Zoom Automático",
-  "short_name": "Moon Lander",
-  "start_url": "./",
+  "name": "Moon Lander",
+  "short_name": "Lander",
+  "lang": "pt-PT",
+  "start_url": "./?source=pwa",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#0a0f18",
+  "orientation": "landscape",
+  "background_color": "#060913",
   "theme_color": "#0a0f18",
+  "description": "Jogo Moon Lander com zoom automático, terrenos amplos e vários locais de aterragem.",
+  "categories": ["games", "simulation", "arcade"],
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "icons/icon-192.png",      "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png",      "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-192.png",  "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png",  "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
