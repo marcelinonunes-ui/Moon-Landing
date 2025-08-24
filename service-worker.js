@@ -1,15 +1,59 @@
-const CACHE_NAME = 'moon-lander-pwa-zoom-v1';
+/* Moon Lander – Service Worker */
+const CACHE_NAME = 'moon-lander-v3'; // ↑ incrementa quando alterares assets
 const ASSETS = [
-  './','./index.html','./manifest.webmanifest','./service-worker.js',
-  './icons/icon-192.png','./icons/icon-512.png','./apple-touch-icon.png'
+  './',
+  './index.html',
+  './manifest.webmanifest',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/maskable-192.png',
+  './icons/maskable-512.png',
+  './apple-touch-icon.png'
 ];
-self.addEventListener('install', e=>{ e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(ASSETS))); self.skipWaiting(); });
-self.addEventListener('activate', e=>{ e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k))))); self.clients.claim(); });
-self.addEventListener('fetch', e=>{
-  const req=e.request;
-  if (req.mode==='navigate'){
-    e.respondWith(fetch(req).then(res=>{ caches.open(CACHE_NAME).then(c=>c.put(req,res.clone())); return res; }).catch(()=>caches.match('./index.html')));
-  } else {
-    e.respondWith(caches.match(req).then(cached=>cached||fetch(req).then(res=>{ caches.open(CACHE_NAME).then(c=>c.put(req,res.clone())); return res; })));
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.map((k) => (k === CACHE_NAME ? null : caches.delete(k))))
+    )
+  );
+  self.clients.claim();
+});
+
+// Estratégia: HTML = network-first; resto = cache-first
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  const isHTML = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
+
+  if (isHTML) {
+    event.respondWith(
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((c) => c.put('./', copy)).catch(()=>{});
+        return res;
+      }).catch(async () => {
+        const cache = await caches.open(CACHE_NAME);
+        return cache.match('./index.html') || cache.match('./');
+      })
+    );
+    return;
   }
+
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(()=>{});
+        return res;
+      });
+    })
+  );
 });
