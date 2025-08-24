@@ -2,7 +2,7 @@
 <html lang="pt">
 <head>
   <meta charset="utf-8">
-  <title>Moon Lander — Completo (PWA, Música & SFX)</title>
+  <title>Moon Lander — Terreno Amplo + Vários Pads + Modos + PWA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0a0f18">
   <link rel="manifest" href="manifest.webmanifest">
@@ -18,34 +18,26 @@
       padding:8px 12px; border-radius:8px; cursor:pointer; backdrop-filter: blur(4px); user-select:none;
     }
     #btnReset:hover{ background:rgba(255,255,255,.16); }
-    #hudTop {
-      position: fixed; left: 12px; top: 12px; z-index: 11; display:flex; gap:10px; align-items:center;
-      color:#cfe0ff; font: 14px system-ui, Segoe UI, Roboto, Arial;
-      background: rgba(6,9,19,0.55); border:1px solid rgba(255,255,255,0.18); padding:6px 10px; border-radius:10px; backdrop-filter: blur(4px);
-    }
-    #hudTop button{
-      background: rgba(255,255,255,0.08); color:#cfe0ff; border:1px solid rgba(255,255,255,0.2);
-      padding:4px 8px; border-radius:8px; cursor:pointer;
+    #soundTip{
+      position:fixed; left:10px; top:10px; z-index:10;
+      background:rgba(255,255,255,.08); color:#cfe0ff; border:1px solid rgba(255,255,255,.2);
+      padding:6px 10px; border-radius:8px; user-select:none; font-size:12px;
     }
   </style>
 </head>
 <body>
 <canvas id="game" width="960" height="540" tabindex="0" aria-label="Moon Lander"></canvas>
-<div id="hudTop">
-  <button id="btnSound" title="Alternar som (S)">🔊 Som ON</button>
-  <button id="btnMusic" title="Alternar música (M)">🎵 Música ON</button>
-</div>
 <button id="btnReset">↺ Reiniciar</button>
+<div id="soundTip">Som: <b id="sndState">OFF</b> — tecla <b>S</b></div>
 
 <script>
-/* Moon Lander — Completo: níveis + terreno irregular + meteoritos + nave nova + progresso
-   + Música chiptune bonita + efeitos SFX (thruster, bip, explosão)
-   Teclas: ←/→ rodar, ↑ motor, P pausa, R reiniciar, S som on/off, M música on/off
+/* Moon Lander — Terreno amplo com scroll + vários pads (dificuldades) + modos Arcade/Realista
+   Teclas: ←/→ rodar, ↑ motor, P pausa, R reiniciar, S som ON/OFF, M muda modo
 */
 (function(){
 "use strict";
 
-/* ========= Canvas / DPI ========= */
+/* ===== Canvas / DPI ===== */
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', {alpha:false, desynchronized:true});
 ctx.imageSmoothingEnabled = false;
@@ -60,758 +52,557 @@ addEventListener('resize', resize, {passive:true}); resize();
 let W = canvas.width / DPR, H = canvas.height / DPR;
 function dims(){ W = canvas.width / DPR; H = canvas.height / DPR; }
 
-/* Garantir foco para teclas funcionarem em todos os browsers */
+/* Foco / bloquear scroll setas */
 function ensureFocus(){ try{ canvas.focus({preventScroll:true}); }catch(_){} }
 addEventListener('pointerdown', ensureFocus, {passive:true});
 addEventListener('load', ensureFocus);
+addEventListener('keydown', (e)=>{ if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault(); }, {passive:false, capture:true});
 
-/* Evitar scroll com setas/space em algumas plataformas */
-addEventListener('keydown', (e)=>{
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
-}, {passive:false, capture:true});
-
-/* ========= Util ========= */
-const TAU = Math.PI*2, DEG = Math.PI/180;
-const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-const lerp  = (a,b,t)=>a+(b-a)*t;
-const rnd   = (a,b)=>Math.random()*(b-a)+a;
-
-function distPointToSeg(px,py, x1,y1, x2,y2){
-  const vx=x2-x1, vy=y2-y1, wx=px-x1, wy=py-y1;
-  const c1 = vx*wx + vy*wy;
-  const c2 = vx*vx + vy*vy;
-  let t = c2>0 ? c1/c2 : 0; t = clamp(t,0,1);
-  const cx = x1 + t*vx, cy = y1 + t*vy;
-  const dx = px-cx, dy = py-cy;
-  return Math.hypot(dx,dy);
+/* ===== Utils ===== */
+const TAU=Math.PI*2, DEG=Math.PI/180;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const rnd=(a,b)=>Math.random()*(b-a)+a;
+function distPointToSeg(px,py,x1,y1,x2,y2){
+  const vx=x2-x1,vy=y2-y1,wx=px-x1,wy=py-y1; const c1=vx*wx+vy*wy,c2=vx*vx+vy*vy;
+  let t=c2>0?c1/c2:0; t=clamp(t,0,1); const cx=x1+t*vx, cy=y1+t*vy; return Math.hypot(px-cx,py-cy);
 }
 
-/* ========= Áudio (chiptune + SFX) ========= */
-const audio = {
-  ctx: null, master:null, musicGain:null, sfxGain:null, thrusterGain:null, thrusterNode:null,
-  musicTimer: null, musicOn: true, sfxOn: true, started:false,
-  melodyPtr: 0,
+/* ===== Opções (guardadas) ===== */
+const SAVE_KEY="moonlander_save_v5";
+const OPT_KEY="moonlander_opts_v2";
+function getSave(){ try{ return JSON.parse(localStorage.getItem(SAVE_KEY)||"{}"); }catch{ return {}; } }
+function setSave(o){ localStorage.setItem(SAVE_KEY, JSON.stringify(o||{})); }
+function bestLevel(){ return (getSave().best|0); }
+function saveBest(n){ const s=getSave(); if ((n|0)>(s.best|0)){ s.best=n|0; setSave(s); } }
+function getOpts(){ try{ return JSON.parse(localStorage.getItem(OPT_KEY)||"{}"); }catch{ return {}; } }
+function setOpts(o){ localStorage.setItem(OPT_KEY, JSON.stringify(o||{})); }
+const opts = Object.assign({mode:"Arcade", audio:false}, getOpts());
+
+/* ===== Áudio (chiptune) ===== */
+const sndLbl=document.getElementById('sndState');
+const audio={
+  ctx:null, master:null, musicGain:null, sfxGain:null, thrusterGain:null, thrusterNode:null,
+  started:false, enabled: !!opts.audio, musicTimer:null, songRootHz:440,
   init(){
     if (this.started) return;
-    this.ctx = new (window.AudioContext||window.webkitAudioContext)();
-    this.master = this.ctx.createGain(); this.master.gain.value = 0.8;
-    this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0.22;
-    this.sfxGain = this.ctx.createGain(); this.sfxGain.gain.value = 0.65;
-    this.thrusterGain = this.ctx.createGain(); this.thrusterGain.gain.value = 0.0;
-
-    this.musicGain.connect(this.master);
-    this.sfxGain.connect(this.master);
-    this.thrusterGain.connect(this.master);
+    this.ctx=new (window.AudioContext||window.webkitAudioContext)();
+    this.master=this.ctx.createGain(); this.master.gain.value=this.enabled?0.7:0.0;
+    this.musicGain=this.ctx.createGain(); this.musicGain.gain.value=0.28;
+    this.sfxGain=this.ctx.createGain(); this.sfxGain.gain.value=0.6;
+    this.thrusterGain=this.ctx.createGain(); this.thrusterGain.gain.value=0.0;
+    this.musicGain.connect(this.master); this.sfxGain.connect(this.master); this.thrusterGain.connect(this.master);
     this.master.connect(this.ctx.destination);
-
-    // Thruster = white noise + LPF
-    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate*2, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for(let i=0;i<data.length;i++) data[i] = Math.random()*2-1;
-    const src = this.ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-    const lpf = this.ctx.createBiquadFilter(); lpf.type='lowpass'; lpf.frequency.value = 900;
-    src.connect(lpf); lpf.connect(this.thrusterGain); src.start();
-    this.thrusterNode = {src, lpf};
-    this.started = true;
+    // thruster: noise + LPF
+    const buf=this.ctx.createBuffer(1,this.ctx.sampleRate*2,this.ctx.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    const src=this.ctx.createBufferSource(); src.buffer=buf; src.loop=true;
+    const lpf=this.ctx.createBiquadFilter(); lpf.type='lowpass'; lpf.frequency.value=900;
+    src.connect(lpf); lpf.connect(this.thrusterGain); src.start(); this.thrusterNode={src,lpf};
+    this.started=true; this.enabled?this.musicStart():this.musicStop(); sndLbl.textContent=this.enabled?'ON':'OFF';
   },
-  toggleMusic(on){
-    this.musicOn = on ?? !this.musicOn;
-    document.getElementById('btnMusic').textContent = this.musicOn ? '🎵 Música ON' : '🎵 Música OFF';
-    if (!this.started) return;
-    this.musicGain.gain.setTargetAtTime(this.musicOn ? 0.22 : 0.0, this.ctx.currentTime, 0.05);
-    if (this.musicOn && !this.musicTimer) this.musicStart();
-    if (!this.musicOn) this.musicStop();
-  },
-  toggleSfx(on){
-    this.sfxOn = on ?? !this.sfxOn;
-    document.getElementById('btnSound').textContent = this.sfxOn ? '🔊 Som ON' : '🔇 Som OFF';
-    if (!this.started) return;
-    this.sfxGain.gain.setTargetAtTime(this.sfxOn ? 0.65 : 0.0, this.ctx.currentTime, 0.05);
-    this.thrusterGain.gain.setTargetAtTime((this.sfxOn && ship.thrust) ? 0.45 : 0.0, this.ctx.currentTime, 0.05);
-  },
-  thruster(on){
-    if (!this.started) return;
-    const tgt = (on && this.sfxOn) ? 0.45 : 0.0;
-    this.thrusterGain.gain.cancelScheduledValues(this.ctx.currentTime);
-    this.thrusterGain.gain.linearRampToValueAtTime(tgt, this.ctx.currentTime + 0.05);
-  },
-  beep(freq=740, dur=0.12){
-    if (!this.started || !this.sfxOn) return;
-    const o = this.ctx.createOscillator(); o.type='square'; o.frequency.value=freq;
-    const g = this.ctx.createGain(); g.gain.value=0.35;
-    o.connect(g); g.connect(this.sfxGain);
-    o.start();
-    g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
-    o.stop(this.ctx.currentTime + dur + 0.02);
-  },
-  boom(){
-    if (!this.started || !this.sfxOn) return;
-    const n = this.ctx.createBufferSource();
-    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate*0.5|0, this.ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * (1 - i/d.length);
-    n.buffer = buf;
-    const g = this.ctx.createGain(); g.gain.value = 0.7;
-    n.connect(g); g.connect(this.sfxGain); n.start();
-
-    const o = this.ctx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(220, this.ctx.currentTime);
-    o.frequency.exponentialRampToValueAtTime(70, this.ctx.currentTime+0.4);
-    const og = this.ctx.createGain(); og.gain.value = 0.5;
-    o.connect(og); og.connect(this.sfxGain); o.start(); o.stop(this.ctx.currentTime+0.41);
-  },
-  // Pretty chiptune melody (dorian-ish), simple sequencer
+  setEnabled(on){ this.enabled=on; sndLbl.textContent=on?'ON':'OFF'; setOpts(Object.assign(opts,{audio:on})); if (!this.started) return; this.master.gain.value=on?0.7:0.0; on?this.musicStart():this.musicStop(); if (!on) this.thruster(false); },
+  thruster(on){ if (!this.started||!this.enabled) return; const t=this.ctx.currentTime; this.thrusterGain.gain.cancelScheduledValues(t); this.thrusterGain.gain.linearRampToValueAtTime(on?0.45:0.0,t+0.06); },
+  beep(f=740,dur=0.12,type='square',gain=0.35){ if (!this.started||!this.enabled) return; const o=this.ctx.createOscillator(); o.type=type; o.frequency.value=f; const g=this.ctx.createGain(); g.gain.value=gain; o.connect(g); g.connect(this.sfxGain); o.start(); g.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+dur); o.stop(this.ctx.currentTime+dur+0.02); },
+  boom(){ if (!this.started||!this.enabled) return; const n=this.ctx.createBufferSource(); const b=this.ctx.createBuffer(1,this.ctx.sampleRate*0.4|0,this.ctx.sampleRate); const d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length); n.buffer=b; const g=this.ctx.createGain(); g.gain.value=0.7; n.connect(g); g.connect(this.sfxGain); n.start(); n.stop(this.ctx.currentTime+0.41); const o=this.ctx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(220,this.ctx.currentTime); o.frequency.exponentialRampToValueAtTime(70,this.ctx.currentTime+0.4); const og=this.ctx.createGain(); og.gain.value=0.5; o.connect(og); og.connect(this.sfxGain); o.start(); o.stop(this.ctx.currentTime+0.41); },
   musicStart(){
-    if (!this.started || !this.musicOn) return;
+    if (!this.started||!this.enabled) return;
     this.musicStop();
-    const scale = [220, 247, 262, 294, 330, 349, 392, 440]; // A Dorian-ish
-    const pat  = [0,2,4,5,4,2,0,2,  3,5,7,8,7,5,3,5];
-    let i = 0;
-    this.musicTimer = setInterval(()=>{
-      if (!this.musicOn) return;
-      const o = this.ctx.createOscillator(); o.type='square';
-      const g = this.ctx.createGain(); g.gain.value = 0.18;
-      o.connect(g); g.connect(this.musicGain);
-      const idx = pat[i % pat.length];
-      const f = scale[idx % scale.length] * ( (i%16)<8 ? 1 : 2 );
-      o.frequency.value = f;
-      o.start();
-      g.gain.setValueAtTime(0.18, this.ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.26);
-      o.stop(this.ctx.currentTime + 0.28);
-      i = (i+1) % 64;
-    }, 280);
+    const scale=[0,2,3,5,7,9,10]; // dórico
+    let step=0; const tempo=108; const beatMs=60000/tempo; const ctx=this.ctx; const root=this.songRootHz;
+    const tick=()=>{
+      // baixo suave
+      const bass = (opts.mode==='Realista' ? 0.14 : 0.18);
+      const bassNote = 55 * Math.pow(2, (scale[(step>>1)%scale.length])/12);
+      const oB=ctx.createOscillator(); oB.type='triangle'; oB.frequency.value=bassNote; const gB=ctx.createGain(); gB.gain.value=bass; oB.connect(gB); gB.connect(this.musicGain); oB.start(); gB.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.28); oB.stop(ctx.currentTime+0.3);
+      // lead arpeggio
+      const arp=[0,7,12,16]; const idx=(step%8<4)?step%4:7-(step%8); const f = root * Math.pow(2,(arp[idx] + scale[(step)%scale.length])/12);
+      const oL=ctx.createOscillator(); oL.type='square'; oL.frequency.value=f; const gL=ctx.createGain(); gL.gain.value=0.16; const fL=ctx.createBiquadFilter(); fL.type='lowpass'; fL.frequency.value=2400; oL.connect(fL); fL.connect(gL); gL.connect(this.musicGain); oL.start(); gL.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.26); oL.stop(ctx.currentTime+0.28);
+      if (step%4===0){ const oP=ctx.createOscillator(); oP.type='sawtooth'; oP.frequency.value=root/2 * Math.pow(2, scale[step%scale.length]/12); const gP=ctx.createGain(); gP.gain.value=0.06; oP.connect(gP); gP.connect(this.musicGain); oP.start(); gP.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.55); oP.stop(ctx.currentTime+0.6); }
+      step=(step+1)%64;
+    };
+    this.musicTimer=setInterval(tick, beatMs*0.5);
   },
-  musicStop(){
-    if (this.musicTimer){ clearInterval(this.musicTimer); this.musicTimer=null; }
-  }
+  musicStop(){ if (this.musicTimer){ clearInterval(this.musicTimer); this.musicTimer=null; } }
 };
-document.getElementById('btnSound').onclick = ()=>{ audio.init(); audio.toggleSfx(); };
-document.getElementById('btnMusic').onclick = ()=>{ audio.init(); audio.toggleMusic(); };
-canvas.addEventListener('pointerdown', ()=>{ audio.init(); audio.musicStart(); }, {once:true});
+if (opts.audio){ sndLbl.textContent='ON'; }
+function toggleSound(){ if (!audio.started) audio.init(); audio.setEnabled(!audio.enabled); }
+document.getElementById('soundTip').addEventListener('click', toggleSound);
 
-/* ========= Partículas ========= */
-const particles = [];
-function addParticle(x,y, vx,vy, life, size, color, grav=0){
-  particles.push({x,y,vx,vy,life,age:0,size,color,grav});
-}
-function updateParticles(dt){
-  for(let i=particles.length-1;i>=0;i--){
-    const p=particles[i];
-    p.age += dt; if (p.age>=p.life){ particles.splice(i,1); continue; }
-    p.vy += p.grav*dt;
-    p.x += p.vx*dt; p.y += p.vy*dt;
-  }
-}
-function drawParticles(){
-  for(const p of particles){
-    const t = 1 - p.age/p.life;
-    ctx.globalAlpha = clamp(t,0,1);
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, Math.max(0.2, p.size*t), 0, TAU);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
+/* ===== Partículas ===== */
+const particles=[];
+function addParticle(x,y,vx,vy,life,size,color,grav=0){ particles.push({x,y,vx,vy,life,age:0,size,color,grav}); }
+function updateParticles(dt){ for(let i=particles.length-1;i>=0;i--){ const p=particles[i]; p.age+=dt; if(p.age>=p.life){ particles.splice(i,1); continue; } p.vy+=p.grav*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; } }
+function drawParticles(camX){ for(const p of particles){ const t=1-p.age/p.life; ctx.globalAlpha=clamp(t,0,1); ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x-camX, p.y, Math.max(0.2,p.size*t), 0, TAU); ctx.fill(); } ctx.globalAlpha=1; }
 
-/* ========= Terreno irregular + Plataforma ========= */
-let terrain = []; // [{x,y}]
-let pad = {x:0,y:0,w:140}; // y é topo da plataforma (superfície)
-const PAD_H = 8, GROUND_MARGIN = 28;
-function midpointTerrain(numPts, baselineY, amp){
-  const pts = new Array(numPts).fill(0).map((_,i)=>({x: i*(W/(numPts-1)), y: baselineY}));
+/* ===== Mundo / Terreno ===== */
+let terrain=[]; // [{x,y}] coords do mundo
+let pads=[];    // [{x,w,top,safeSpeed,safeAngle,label,color}]
+const PAD_H=8, GROUND_MARGIN=28;
+let worldW=2000; // largura do mundo (scroll)
+function midpointTerrain(numPts, baselineY, amp, span){
+  const pts = new Array(numPts).fill(0).map((_,i)=>({x: i*(span/(numPts-1)), y: baselineY}));
   function displace(a,b,disp){
     if (b<=a+1) return;
-    const m = (a+b)>>1;
-    const ya = pts[a].y, yb = pts[b].y;
-    pts[m].y = (ya+yb)/2 + rnd(-disp, disp);
-    displace(a,m, disp*0.55);
-    displace(m,b, disp*0.55);
+    const m=(a+b)>>1, ya=pts[a].y, yb=pts[b].y;
+    pts[m].y=(ya+yb)/2 + rnd(-disp, disp);
+    displace(a,m, disp*0.55); displace(m,b, disp*0.55);
   }
-  const last = numPts-1;
-  pts[0].y = baselineY + rnd(-amp*0.3, amp*0.3);
-  pts[last].y = baselineY + rnd(-amp*0.3, amp*0.3);
-  displace(0,last, amp);
-  for(let k=0;k<2;k++) for(let i=1;i<pts.length-1;i++)
-    pts[i].y = (pts[i-1].y + pts[i].y + pts[i+1].y)/3;
-  for(const p of pts) p.y = clamp(p.y, H*0.35, H - GROUND_MARGIN);
+  const last=numPts-1;
+  pts[0].y=baselineY+rnd(-amp*0.3,amp*0.3); pts[last].y=baselineY+rnd(-amp*0.3,amp*0.3);
+  displace(0,last,amp);
+  for(let k=0;k<2;k++) for(let i=1;i<pts.length-1;i++) pts[i].y=(pts[i-1].y+pts[i].y+pts[i+1].y)/3;
+  for(const p of pts) p.y=clamp(p.y, H*0.35, H-GROUND_MARGIN);
   return pts;
 }
-function carvePad(pts, desiredW){
-  const padW = Math.min(desiredW, W*0.45);
-  const x = Math.floor(rnd(60, W-60-padW));
-  let i0 = 0; while(i0<pts.length-1 && pts[i0+1].x < x) i0++;
-  let i1 = i0; while(i1<pts.length-1 && pts[i1].x < x+padW) i1++;
-  let sum=0, cnt=0; for(let i=i0;i<=i1;i++){ sum+=pts[i].y; cnt++; }
-  const y = (sum/cnt)|0;
-  for(let i=i0;i<=i1;i++) pts[i].y = y;
-  pad.x = x; pad.w = (pts[i1].x - pts[i0].x); pad.y = y - PAD_H;
-  return {i0,i1};
+function carvePadRange(pts, x, padW){
+  let i0=0; while(i0<pts.length-1 && pts[i0+1].x<x) i0++;
+  let i1=i0; const x2=x+padW; while(i1<pts.length-1 && pts[i1].x<x2) i1++;
+  let sum=0,cnt=0; for(let i=i0;i<=i1;i++){ sum+=pts[i].y; cnt++; }
+  const y=(sum/cnt)|0; for(let i=i0;i<=i1;i++) pts[i].y=y;
+  return {x, w: pts[i1].x-pts[i0].x, y:y-PAD_H};
 }
-function buildTerrain(level){
-  const baseline = H*lerp(0.72, 0.84, 0.5);
-  const amp = lerp(40, 140, 0.6);
-  terrain = midpointTerrain(28, baseline, amp);
-  carvePad(terrain, level.padW);
-}
-function drawTerrain(){
-  ctx.fillStyle = "#1e2433";
-  ctx.beginPath();
-  ctx.moveTo(0,H);
-  for(let i=0;i<terrain.length;i++){
-    const p=terrain[i]; ctx.lineTo(p.x, p.y);
+function buildWorld(level){
+  worldW = Math.max(W*3, 2200 + level.idx*40);
+  const baseline=H*0.78, amp=100;
+  terrain = midpointTerrain( Math.max(28, Math.floor(worldW/80)), baseline, amp, worldW );
+  pads.length=0;
+  const padCount = 3 + (level.idx>10?1:0);
+  const slots = [];
+  for(let i=0;i<padCount;i++){
+    slots.push( lerp(0.12,0.88, i/(padCount-1) ) );
   }
-  ctx.lineTo(W,H); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth = 2;
-  for(let i=0;i<terrain.length-1;i++){
-    const a=terrain[i], b=terrain[i+1];
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  for(const s of slots){
+    const cx = s*worldW;
+    const t = Math.random();
+    const diff = (t<0.45) ? 'Fácil' : (t<0.8 ? 'Médio' : 'Difícil');
+    const wBase = diff==='Fácil' ? lerp(220,180, level.t) : diff==='Médio' ? lerp(160,120, level.t) : lerp(110,70, level.t);
+    const padW = Math.round(wBase);
+    const pr = carvePadRange(terrain, clamp(cx - padW/2, 40, worldW-40-padW), padW);
+    const safeSpeed = Math.round( (diff==='Fácil'? 95: diff==='Médio'? 70: 45) - level.t*15 );
+    const safeAngle = Math.round( (diff==='Fácil'? 18: diff==='Médio'? 12: 8) - level.t*3 );
+    const color = diff==='Fácil' ? "#3be0a0" : diff==='Médio' ? "#ffd95a" : "#ff9b5a";
+    pads.push({ x:pr.x, w:pr.w, top:pr.y, safeSpeed, safeAngle, label:diff, color });
   }
-}
-function drawPad(){
-  ctx.globalAlpha = 0.3; ctx.fillStyle = "#000";
-  roundRect(pad.x-6, pad.y+PAD_H, pad.w+12, 10, 4); ctx.fill(); ctx.globalAlpha = 1;
-  ctx.fillStyle = (state===STATES.LAND) ? "#00d78f" : "#d7d700";
-  roundRect(pad.x, pad.y, pad.w, PAD_H, 3); ctx.fill();
-  ctx.fillStyle = "#8892a8";
-  ctx.fillRect(pad.x-6, pad.y, 4, PAD_H+10);
-  ctx.fillRect(pad.x+pad.w+2, pad.y, 4, PAD_H+10);
-  const t = (Math.sin(time*6)+1)/2;
-  ctx.globalAlpha = 0.25 + 0.35*t; ctx.fillStyle = "#8fe3ff";
-  roundRect(pad.x, pad.y-6, pad.w, 4, 2); ctx.fill(); ctx.globalAlpha = 1;
 }
 
-/* ========= Meteoritos ========= */
-const meteorites = []; // {x,y,vx,vy,r,spin,ang,alive}
-function spawnMeteor(level){
-  const r = rnd(6,16);
-  const x = rnd(-60, W+60);
-  const y = -40;
-  const vx = rnd(-30, 30);
-  const vy = rnd(level.meteorMinVy, level.meteorMaxVy);
-  const spin = rnd(-2, 2);
+/* ===== Meteoritos ===== */
+const meteorites=[];
+function spawnMeteor(L){
+  const r=rnd(6,16), x=rnd(-60, worldW+60), y=-40, vx=rnd(-30,30), vy=rnd(L.meteorMinVy,L.meteorMaxVy), spin=rnd(-2,2);
   meteorites.push({x,y,vx,vy,r,spin,ang:0,alive:true});
 }
-let meteorTimer = 0;
-function updateMeteorites(dt, level){
-  meteorTimer -= dt;
-  if (meteorTimer <= 0){
-    spawnMeteor(level);
-    meteorTimer = rnd(level.meteorRate*0.6, level.meteorRate*1.4);
-  }
+let meteorTimer=0;
+function updateMeteorites(dt,L){
+  meteorTimer-=dt;
+  if (meteorTimer<=0){ spawnMeteor(L); meteorTimer=rnd(L.meteorRate*0.6, L.meteorRate*1.4); }
   for (let i=meteorites.length-1;i>=0;i--){
-    const m = meteorites[i]; if (!m.alive){ meteorites.splice(i,1); continue; }
-    m.ang += m.spin*dt;
-    m.vy += level.gravity*0.7*dt;
-    m.x += m.vx*dt; m.y += m.vy*dt;
-
-    const dx = m.x - ship.x, dy = m.y - ship.y;
-    if (Math.hypot(dx,dy) < m.r + SHIP_R*0.9){
-      explodeAt(m.x, m.y);
-      crash();
-      m.alive=false; continue;
-    }
-    for(let j=0;j<terrain.length-1;j++){
-      const a=terrain[j], b=terrain[j+1];
+    const m=meteorites[i]; if(!m.alive){ meteorites.splice(i,1); continue; }
+    m.ang+=m.spin*dt; m.vy+=L.gravity*0.7*dt; m.x+=m.vx*dt; m.y+=m.vy*dt;
+    if (Math.hypot(m.x-ship.x, m.y-ship.y) < m.r + SHIP_R*0.9){ explodeAt(m.x,m.y); crash(); m.alive=false; continue; }
+    for(let j=0;j<terrain.length-1;j++){ const a=terrain[j], b=terrain[j+1];
       if (distPointToSeg(m.x,m.y, a.x,a.y, b.x,b.y) <= m.r){
-        for(let k=0;k<14;k++){
-          const ang = rnd(0,TAU), sp=rnd(30,120);
-          addParticle(m.x, m.y, Math.cos(ang)*sp, Math.sin(ang)*sp*0.5, rnd(0.3,0.7), rnd(1.2,2.6), "#cbbba0", 120);
-        }
-        m.alive=false; break;
+        for(let k=0;k<14;k++){ const ang=rnd(0,TAU), sp=rnd(30,120);
+          addParticle(m.x,m.y, Math.cos(ang)*sp, Math.sin(ang)*sp*0.5, rnd(0.3,0.7), rnd(1.2,2.6), "#cbbba0", 120);
+        } m.alive=false; break;
       }
     }
-    if (m.y > H+80) m.alive=false;
+    if (m.y>H+80) m.alive=false;
   }
 }
-function drawMeteorites(){
+function drawMeteorites(camX){
   for(const m of meteorites){
-    ctx.save();
-    ctx.translate(m.x, m.y); ctx.rotate(m.ang);
-    ctx.fillStyle = "#8a7f7a"; ctx.strokeStyle="#5c5350"; ctx.lineWidth=1;
+    ctx.save(); ctx.translate(m.x-camX, m.y); ctx.rotate(m.ang);
+    ctx.fillStyle="#8a7f7a"; ctx.strokeStyle="#5c5350"; ctx.lineWidth=1;
     ctx.beginPath();
-    for(let i=0;i<7;i++){
-      const ang = i/7*TAU;
-      const rr = m.r * (0.9 + 0.2*Math.sin(i*1.7));
-      const px = Math.cos(ang)*rr, py = Math.sin(ang)*rr;
-      if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-    }
+    for(let i=0;i<7;i++){ const a=i/7*TAU; const rr=m.r*(0.9+0.2*Math.sin(i*1.7)); const px=Math.cos(a)*rr, py=Math.sin(a)*rr; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py); }
     ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
 }
 
-/* ========= Nave ========= */
-const SHIP_R = 14;
-const ROT_SPEED = 120*DEG;
-const BASE_THRUST = 185;
-const FUEL_BURN = 12;
+/* ===== Nave / Física ===== */
+const SHIP_R=14;
+const ROT_SPEED=120*DEG;
+const BASE_THRUST=185;
+const FUEL_BURN=12;
 
-const ship = { x:0,y:0,vx:0,vy:0,ang:0, left:false,right:false,thrust:false,fuel:100, alive:true };
+const ship={ x:0,y:0,vx:0,vy:0,ang:0,angVel:0,left:false,right:false,thrust:false,fuel:100, alive:true };
+let camX=0;
 
-function drawShip(){
+function drawShip(camX_){
   ctx.save();
-  ctx.translate(ship.x, ship.y);
+  ctx.translate(ship.x-camX_, ship.y);
   ctx.rotate(ship.ang);
 
-  const s = 1.0;
-  const t = time;
-
-  // sombra suave
-  ctx.save();
-  ctx.globalAlpha = 0.18;
-  ctx.fillStyle = "#000";
-  ctx.beginPath();
-  ctx.ellipse(0, 16*s, 14*s, 4*s, 0, 0, TAU);
-  ctx.fill();
-  ctx.restore();
-
-  // Chama do motor
+  const s=1.0, t=time;
+  // sombra
+  ctx.save(); ctx.globalAlpha=0.18; ctx.fillStyle="#000"; ctx.beginPath(); ctx.ellipse(0,16*s,14*s,4*s,0,0,TAU); ctx.fill(); ctx.restore();
+  // chama
   if (ship.thrust && state===STATES.PLAY && ship.fuel>0){
-    const len = 18 + Math.sin(t*50)*4;
-    ctx.globalAlpha = 0.25; ctx.fillStyle = "#ffb84d";
-    ctx.beginPath(); ctx.ellipse(0, 10+len*0.6, 7, len*0.8, 0, 0, TAU); ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.beginPath(); ctx.moveTo(0, 10); ctx.lineTo(-6, 10+len); ctx.lineTo(6, 10+len); ctx.closePath();
-    ctx.fillStyle = "#ff9a1f"; ctx.fill();
-    ctx.globalAlpha = 0.75; ctx.fillStyle = "#ffd76a";
-    ctx.beginPath(); ctx.moveTo(0, 10); ctx.lineTo(-3, 10+len*0.65); ctx.lineTo(3, 10+len*0.65); ctx.closePath(); ctx.fill();
-    ctx.globalAlpha = 1;
+    const len=18+Math.sin(t*50)*4;
+    ctx.globalAlpha=0.25; ctx.fillStyle="#ffb84d"; ctx.beginPath(); ctx.ellipse(0, 10+len*0.6, 7, len*0.8, 0,0,TAU); ctx.fill(); ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(-6,10+len); ctx.lineTo(6,10+len); ctx.closePath(); ctx.fillStyle="#ff9a1f"; ctx.fill();
+    ctx.globalAlpha=0.75; ctx.fillStyle="#ffd76a"; ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(-3,10+len*0.65); ctx.lineTo(3,10+len*0.65); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
   }
-
-  // Sino do motor
-  let gBell = ctx.createLinearGradient(0, 8, 0, 18);
-  gBell.addColorStop(0, "#9aa6bf"); gBell.addColorStop(1, "#5f6b86");
-  ctx.fillStyle = gBell;
-  ctx.beginPath();
-  ctx.moveTo(-8*s, 10*s);
-  ctx.lineTo(-6*s, 18*s);
-  ctx.lineTo(6*s, 18*s);
-  ctx.lineTo(8*s, 10*s);
-  ctx.closePath();
-  ctx.fill();
-
-  // Pernas
-  const spring = Math.sin(t*6)*0.6;
-  ctx.lineWidth = 2; ctx.strokeStyle = "#c2cce0";
-  ctx.beginPath(); ctx.moveTo(-8*s, 9*s); ctx.lineTo(-14*s, (14+spring)*s); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(8*s, 9*s);  ctx.lineTo(14*s, (14+spring)*s); ctx.stroke();
-  ctx.lineWidth = 2.2;
-  ctx.beginPath(); ctx.moveTo(-16*s, (14+spring)*s); ctx.lineTo(-10*s, (14+spring)*s);
-  ctx.moveTo(10*s, (14+spring)*s);  ctx.lineTo(16*s, (14+spring)*s); ctx.stroke();
-
-  // Corpo
-  let gHull = ctx.createLinearGradient(-10, -16, 12, 12);
-  gHull.addColorStop(0, "#e9f3ff"); gHull.addColorStop(0.55, "#cfdcf5"); gHull.addColorStop(1, "#a7b7d8");
-  ctx.fillStyle = gHull; ctx.strokeStyle = "#7e8eae"; ctx.lineWidth = 1.6;
-  ctx.beginPath();
-  ctx.moveTo(0, -16*s);
-  ctx.lineTo(11*s, 10*s);
-  ctx.lineTo(-11*s, 10*s);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-
-  // Cúpula
-  let gDome = ctx.createRadialGradient(-3, -8, 1, 0, -8, 8);
-  gDome.addColorStop(0, "#b7ecff");
-  gDome.addColorStop(1, "#6fb9d6");
-  ctx.fillStyle = gDome;
-  ctx.beginPath(); ctx.arc(0, -8*s, 5.2*s, 0, TAU); ctx.fill();
-  ctx.globalAlpha = 0.35; ctx.fillStyle = "#fff";
-  ctx.beginPath(); ctx.ellipse(-2.5*s, -10*s, 2.2*s, 1.1*s, -0.6, 0, TAU); ctx.fill();
-  ctx.globalAlpha = 1;
-
-  // Antena e luzes
-  ctx.strokeStyle = "#9fb3d6"; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(0,-16*s); ctx.lineTo(0,-20*s); ctx.stroke();
-  ctx.fillStyle = "#ff4d6d"; ctx.beginPath(); ctx.arc(0,-22*s,1.6*s,0,TAU); ctx.fill();
-  ctx.fillStyle = "#44ff99"; ctx.beginPath(); ctx.arc(-7*s, 2*s, 1.6*s, 0, TAU); ctx.fill();
-  ctx.fillStyle = "#ffaa33"; ctx.beginPath(); ctx.arc(7*s, 2*s, 1.6*s, 0, TAU); ctx.fill();
-
+  // sino
+  let gBell=ctx.createLinearGradient(0,8,0,18); gBell.addColorStop(0,"#9aa6bf"); gBell.addColorStop(1,"#5f6b86");
+  ctx.fillStyle=gBell; ctx.beginPath(); ctx.moveTo(-8*s,10*s); ctx.lineTo(-6*s,18*s); ctx.lineTo(6*s,18*s); ctx.lineTo(8*s,10*s); ctx.closePath(); ctx.fill();
+  // pernas
+  const spring=Math.sin(t*6)*0.6; ctx.lineWidth=2; ctx.strokeStyle="#c2cce0";
+  ctx.beginPath(); ctx.moveTo(-8*s,9*s); ctx.lineTo(-14*s,(14+spring)*s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(8*s,9*s);  ctx.lineTo(14*s,(14+spring)*s); ctx.stroke();
+  ctx.lineWidth=2.2; ctx.beginPath(); ctx.moveTo(-16*s,(14+spring)*s); ctx.lineTo(-10*s,(14+spring)*s); ctx.moveTo(10*s,(14+spring)*s); ctx.lineTo(16*s,(14+spring)*s); ctx.stroke();
+  // cápsula
+  let gHull=ctx.createLinearGradient(-10,-16,12,12); gHull.addColorStop(0,"#e9f3ff"); gHull.addColorStop(0.55,"#cfdcf5"); gHull.addColorStop(1,"#a7b7d8");
+  ctx.fillStyle=gHull; ctx.strokeStyle="#7e8eae"; ctx.lineWidth=1.6;
+  ctx.beginPath(); ctx.moveTo(0,-16*s); ctx.lineTo(11*s,10*s); ctx.lineTo(-11*s,10*s); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // cúpula
+  let gDome=ctx.createRadialGradient(-3,-8,1,0,-8,8); gDome.addColorStop(0,"#b7ecff"); gDome.addColorStop(1,"#6fb9d6");
+  ctx.fillStyle=gDome; ctx.beginPath(); ctx.arc(0,-8*s,5.2*s,0,TAU); ctx.fill();
+  ctx.globalAlpha=0.35; ctx.fillStyle="#fff"; ctx.beginPath(); ctx.ellipse(-2.5*s,-10*s,2.2*s,1.1*s,-0.6,0,TAU); ctx.fill(); ctx.globalAlpha=1;
+  // antena + luzes
+  ctx.strokeStyle="#9fb3d6"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(0,-16*s); ctx.lineTo(0,-20*s); ctx.stroke();
+  ctx.fillStyle="#ff4d6d"; ctx.beginPath(); ctx.arc(0,-22*s,1.6*s,0,TAU); ctx.fill();
+  ctx.fillStyle="#44ff99"; ctx.beginPath(); ctx.arc(-7*s,2*s,1.6*s,0,TAU); ctx.fill();
+  ctx.fillStyle="#ffaa33"; ctx.beginPath(); ctx.arc(7*s,2*s,1.6*s,0,TAU); ctx.fill();
   ctx.restore();
 }
 
-/* ========= Estados ========= */
-const STATES = { MENU:0, PLAY:1, CRASH:2, LAND:3, PAUSE:4, OVER:5 };
-let state = STATES.MENU;
+/* ===== Estados / Níveis ===== */
+const STATES={ MENU:0, PLAY:1, CRASH:2, LAND:3, PAUSE:4, OVER:5 };
+let state=STATES.MENU;
 
-/* ========= Progresso ========= */
-const SAVE_KEY = "moonlander_save_v4";
-function getSave(){ try{ return JSON.parse(localStorage.getItem(SAVE_KEY)||"{}"); }catch(e){ return {}; } }
-function setSave(obj){ localStorage.setItem(SAVE_KEY, JSON.stringify(obj||{})); }
-function bestLevel(){ const s=getSave(); return s.best|0; }
-function saveBest(n){ const s=getSave(); if ((n|0) > (s.best|0)) { s.best = n|0; setSave(s); } }
-function resetSave(){ localStorage.removeItem(SAVE_KEY); }
-
-/* ========= Níveis ========= */
-const LEVELS_TOTAL = 20;
-let levels = []; let cur = 0; let currentLevel = null;
+const LEVELS_TOTAL=20;
+let levels=[], cur=0, currentLevel=null;
 function makeLevel(i){
-  const t = i/(LEVELS_TOTAL-1);
+  const t=i/(LEVELS_TOTAL-1);
+  const roots=[392,440,523.25,349.23]; // G4, A4, C5, F4
   return {
-    idx: i+1, name: `Nível ${i+1}`,
+    idx:i+1, name:`Nível ${i+1}`, t,
     gravity: lerp(85, 160, t),
     windMax: lerp(0, 70, t),
-    padW: Math.round(lerp(240, 70, t)),
-    fuel: Math.round(lerp(110, 55, t)),
-    safeSpeed: Math.round( lerp(85, 28, t) ),
-    safeAngle: Math.round( lerp(18, 6, t) ),
+    padCount: 3 + (i>10?1:0),
+    fuel: Math.round(lerp(115, 55, t)),
+    baseSpeed: Math.round(lerp(85, 45, t)),
+    baseAngle: Math.round(lerp(18, 8, t)),
     windPeriod: 6 + 6*t,
     meteorRate: lerp(2.2, 1.2, t),
     meteorMinVy: lerp(60, 90, t),
-    meteorMaxVy: lerp(120, 170, t)
+    meteorMaxVy: lerp(120, 170, t),
+    musicRoot: roots[i%roots.length]
   };
 }
-function generateLevels(){ levels=[]; for(let i=0;i<LEVELS_TOTAL;i++) levels.push(makeLevel(i)); }
+function generateLevels(){ levels.length=0; for(let i=0;i<LEVELS_TOTAL;i++) levels.push(makeLevel(i)); }
 
-/* ========= Fluxo ========= */
+/* ===== Modos (Arcade/Realista) ===== */
+function applyModeToLevel(L, mode){
+  const M = Object.assign({}, L);
+  if (mode==='Realista'){
+    M.gravity *= 1.1;
+    M.fuel = Math.round(M.fuel*0.8);
+    M.baseSpeed = Math.max(28, Math.round(M.baseSpeed*0.85));
+    M.baseAngle = Math.max(6,  Math.round(M.baseAngle*0.8));
+    M.meteorRate *= 0.9;
+  }
+  return M;
+}
+
+/* ===== Fluxo ===== */
 function startGame(startLevel=0){
   generateLevels();
-  cur = clamp(startLevel, 0, levels.length-1);
+  cur=clamp(startLevel,0,levels.length-1);
   loadLevel(cur);
-  state = STATES.PLAY;
+  state=STATES.PLAY;
 }
 function loadLevel(i){
   dims();
-  currentLevel = levels[i];
+  currentLevel = applyModeToLevel(levels[i], opts.mode);
+  audio.songRootHz = currentLevel.musicRoot;
+  if (audio.started && audio.enabled){ audio.musicStart(); }
   ship.x = W*0.5; ship.y = Math.max(80, H*0.18);
-  ship.vx=0; ship.vy=0; ship.ang=0; ship.fuel = currentLevel.fuel; ship.alive=true;
-  time=0; wind=0; meteorites.length = 0; meteorTimer=0;
-  buildTerrain(currentLevel);
+  ship.vx=ship.vy=0; ship.ang=0; ship.angVel=0; ship.fuel=currentLevel.fuel; ship.alive=true;
+  time=0; wind=0; meteorites.length=0; meteorTimer=0; particles.length=0;
+  buildWorld(currentLevel);
+  camX=clamp(ship.x - W*0.5, 0, Math.max(0, worldW - W));
 }
-function restartLevel(){ if (!currentLevel) return startGame(0); loadLevel(cur); state = STATES.PLAY; }
+function restartLevel(){ if (!currentLevel) return startGame(0); loadLevel(cur); state=STATES.PLAY; }
 document.getElementById('btnReset').addEventListener('click', restartLevel);
 
-/* ========= Input ========= */
+/* ===== Controlo ===== */
 addEventListener('keydown', (e)=>{
   if (e.repeat) return;
   if (state===STATES.MENU){
-    if (e.key===' ' || e.key==='Enter' || e.key==='ArrowUp'){ startFromMenuDefault(); }
-    if (e.key.toLowerCase()==='s'){ audio.init(); audio.toggleSfx(); }
-    if (e.key.toLowerCase()==='m'){ audio.init(); audio.toggleMusic(); }
+    if (e.key===' '||e.key==='Enter'||e.key==='ArrowUp'){ startFromMenuDefault(); }
+    if (e.key.toLowerCase()==='m'){ toggleMode(); drawMenu(); }
+    if (e.key.toLowerCase()==='s'){ toggleSound(); }
     return;
   }
-  if (e.key==='ArrowUp'){ ship.thrust = true; audio.init(); audio.thruster(true); }
-  if (e.key==='ArrowLeft'){ ship.left = true; rcsBurst(-1); }
-  if (e.key==='ArrowRight'){ ship.right = true; rcsBurst(1); }
-  if (e.key.toLowerCase()==='p'){ state = (state===STATES.PLAY)?STATES.PAUSE:STATES.PLAY; }
+  if (e.key==='ArrowUp'){ ship.thrust=true; if(audio.enabled) audio.thruster(true); }
+  if (e.key==='ArrowLeft'){ ship.left=true; rcsBurst(-1); }
+  if (e.key==='ArrowRight'){ ship.right=true; rcsBurst(1); }
+  if (e.key.toLowerCase()==='p'){ state=(state===STATES.PLAY)?STATES.PAUSE:STATES.PLAY; }
   if (e.key.toLowerCase()==='r'){ restartLevel(); }
-  if (e.key.toLowerCase()==='s'){ audio.init(); audio.toggleSfx(); }
-  if (e.key.toLowerCase()==='m'){ audio.init(); audio.toggleMusic(); }
+  if (e.key.toLowerCase()==='s'){ toggleSound(); }
+  if (e.key.toLowerCase()==='m'){ toggleMode(); }
 });
 addEventListener('keyup', (e)=>{
   if (e.key==='ArrowUp'){ ship.thrust=false; audio.thruster(false); }
   if (e.key==='ArrowLeft') ship.left=false;
   if (e.key==='ArrowRight') ship.right=false;
 });
+function toggleMode(){ opts.mode = (opts.mode==='Arcade'?'Realista':'Arcade'); setOpts(opts); if (state!==STATES.MENU){ loadLevel(cur); } }
 
-/* Touch buttons pintados no canvas */
-const touch = {left:false,right:false,thrust:false};
-let pointers = new Map();
-canvas.addEventListener('pointerdown', (e)=>{ canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); handleTouch(e.clientX,e.clientY,true); audio.init(); audio.musicStart(); });
-canvas.addEventListener('pointermove', (e)=>{ if (!pointers.has(e.pointerId)) return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); });
-function endPointer(e){
-  pointers.delete(e.pointerId);
-  touch.left=touch.right=touch.thrust=false;
-  for(const p of pointers.values()) handleTouch(p.x,p.y,true);
-  syncTouch();
-  audio.thruster(false);
-}
-canvas.addEventListener('pointerup', endPointer);
-canvas.addEventListener('pointercancel', endPointer);
-canvas.addEventListener('lostpointercapture', endPointer);
-function btnGeom(){
-  const pad=18; const R=Math.max(44, Math.min(68, Math.floor(Math.min(innerWidth,innerHeight)*0.07)));
-  return {
-    left:{x:pad+R,y:innerHeight-pad-R,r:R},
-    right:{x:pad+R*3+16,y:innerHeight-pad-R,r:R},
-    thrust:{x:innerWidth-pad-R,y:innerHeight-pad-R,r:Math.floor(R*1.1)}
-  };
+/* Toque */
+const touch={left:false,right:false,thrust:false};
+let pointers=new Map();
+canvas.addEventListener('pointerdown',(e)=>{ canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); handleTouch(e.clientX,e.clientY,true); });
+canvas.addEventListener('pointermove',(e)=>{ if(!pointers.has(e.pointerId)) return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); });
+function endPointer(e){ pointers.delete(e.pointerId); touch.left=touch.right=touch.thrust=false; for(const p of pointers.values()) handleTouch(p.x,p.y,true); syncTouch(); }
+canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer); canvas.addEventListener('lostpointercapture', endPointer);
+function btnGeom(){ const pad=18; const R=Math.max(44, Math.min(68, Math.floor(Math.min(innerWidth,innerHeight)*0.07)));
+  return { left:{x:pad+R,y:innerHeight-pad-R,r:R}, right:{x:pad+R*3+16,y:innerHeight-pad-R,r:R}, thrust:{x:innerWidth-pad-R,y:innerHeight-pad-R,r:Math.floor(R*1.1)} };
 }
 function insideCircle(px,py,c){ const dx=px-c.x, dy=py-c.y; return dx*dx+dy*dy<=c.r*c.r; }
-function handleTouch(cx,cy){
-  const g=btnGeom(); const x=cx, y=cy;
-  if (insideCircle(x,y,g.left))  touch.left=true;
-  if (insideCircle(x,y,g.right)) touch.right=true;
-  if (insideCircle(x,y,g.thrust))touch.thrust=true;
-  syncTouch();
-}
-function syncTouch(){
-  ship.left=touch.left; ship.right=touch.right;
-  if (touch.thrust && !ship.thrust){ audio.init(); audio.thruster(true); }
-  if (!touch.thrust && ship.thrust){ audio.thruster(false); }
-  ship.thrust=touch.thrust;
-}
+function handleTouch(x,y){ const g=btnGeom(); if(insideCircle(x,y,g.left))touch.left=true; if(insideCircle(x,y,g.right))touch.right=true; if(insideCircle(x,y,g.thrust))touch.thrust=true; syncTouch(); }
+function syncTouch(){ ship.left=touch.left; ship.right=touch.right; ship.thrust=touch.thrust; if(audio.enabled) audio.thruster(touch.thrust); }
 
-/* ========= RCS (partículas laterais) ========= */
-function rcsBurst(dir){
-  for(let k=0;k<6;k++){
-    const a = ship.ang + (dir<0 ? Math.PI/2 : -Math.PI/2) + rnd(-0.25,0.25);
-    const sp = rnd(60,120);
-    addParticle(ship.x + Math.cos(a+Math.PI)*8, ship.y + Math.sin(a+Math.PI)*8,
-      Math.cos(a)*sp + ship.vx*0.1, Math.sin(a)*sp + ship.vy*0.1, rnd(0.2,0.4), rnd(0.8,1.6), "#9ad7ff");
-  }
-}
+/* RCS */
+function rcsBurst(dir){ for(let k=0;k<6;k++){ const a=ship.ang + (dir<0?Math.PI/2:-Math.PI/2)+rnd(-0.25,0.25); const sp=rnd(60,120);
+  addParticle(ship.x+Math.cos(a+Math.PI)*8, ship.y+Math.sin(a+Math.PI)*8, Math.cos(a)*sp+ship.vx*0.1, Math.sin(a)*sp+ship.vy*0.1, rnd(0.2,0.4), rnd(0.8,1.6), "#9ad7ff");
+}}
 
-/* ========= Atualização ========= */
-const MAX_DT = 1/20;
-let last = performance.now();
-function tick(now){
-  requestAnimationFrame(tick);
-  const dt = Math.min(MAX_DT, (now-last)/1000); last = now;
-  dims();
-  if (state===STATES.PLAY) update(dt);
-  render();
-}
+/* ===== Loop ===== */
+const MAX_DT=1/20; let last=performance.now();
+function tick(now){ requestAnimationFrame(tick); const dt=Math.min(MAX_DT,(now-last)/1000); last=now; dims(); if(state===STATES.PLAY) update(dt); render(); }
 requestAnimationFrame(tick);
-
-let time = 0;
-let wind = 0;
+let time=0, wind=0;
 
 function update(dt){
-  time += dt;
-  const L = currentLevel;
-  const windTarget = Math.sin(time * (TAU / L.windPeriod)) * L.windMax;
-  wind = lerp(wind, windTarget, 0.03);
+  time+=dt;
+  const L=currentLevel;
+  const windTarget=Math.sin(time*(TAU/L.windPeriod))*L.windMax; wind=lerp(wind, windTarget, 0.03);
 
-  if (ship.left)  ship.ang -= ROT_SPEED*dt;
-  if (ship.right) ship.ang += ROT_SPEED*dt;
+  // rotação
+  if (opts.mode==='Arcade'){
+    if (ship.left) ship.ang -= ROT_SPEED*dt;
+    if (ship.right) ship.ang += ROT_SPEED*dt;
+  } else {
+    const torque = (ship.right?1:0) - (ship.left?1:0);
+    ship.angVel += torque*2.8*DEG;
+    ship.angVel *= 0.985;
+    ship.ang += ship.angVel;
+  }
 
-  let thrustAcc = 0;
+  // empuxo
+  let thrustAcc=0;
   if (ship.thrust && ship.fuel>0){
-    thrustAcc = BASE_THRUST;
-    ship.fuel = Math.max(0, ship.fuel - FUEL_BURN*dt);
+    const thrustMult = (opts.mode==='Realista') ? 0.92 : 1.0;
+    thrustAcc = BASE_THRUST*thrustMult;
+    const burn = FUEL_BURN * (opts.mode==='Realista'?1.15:1.0);
+    ship.fuel=Math.max(0, ship.fuel - burn*dt);
     for(let k=0;k<3;k++){
-      const a = ship.ang + Math.PI + rnd(-0.18,0.18);
-      const sp = rnd(70,140);
+      const a=ship.ang+Math.PI+rnd(-0.18,0.18); const sp=rnd(70,140);
       addParticle(ship.x + Math.sin(ship.ang)*10, ship.y - Math.cos(ship.ang)*10,
-        Math.sin(a)*sp + ship.vx*0.1, -Math.cos(a)*sp + ship.vy*0.1,
-        rnd(0.25,0.45), rnd(1.2,2.2), "#ffbb55");
+        Math.sin(a)*sp + ship.vx*0.1, -Math.cos(a)*sp + ship.vy*0.1, rnd(0.25,0.45), rnd(1.2,2.2), "#ffbb55");
     }
   }
 
-  const ax = Math.sin(ship.ang)*thrustAcc + wind/1.0;
-  const ay = -Math.cos(ship.ang)*thrustAcc + L.gravity;
-  ship.vx += ax*dt; ship.vy += ay*dt;
-  ship.x += ship.vx*dt; ship.y += ship.vy*dt;
+  // física translacional
+  const ax=Math.sin(ship.ang)*thrustAcc + wind/1.0;
+  const ay=-Math.cos(ship.ang)*thrustAcc + L.gravity;
+  ship.vx+=ax*dt; ship.vy+=ay*dt;
+  ship.x+=ship.vx*dt; ship.y+=ship.vy*dt;
 
-  const margin=30;
-  if (ship.x<-margin) ship.x=W+margin;
-  if (ship.x>W+margin) ship.x=-margin;
+  // limites do mundo
+  if (ship.x<0){ ship.x=0; ship.vx=0; }
+  if (ship.x>worldW){ ship.x=worldW; ship.vx=0; }
 
-  if ((ship.y + SHIP_R) >= pad.y && (ship.y + SHIP_R) <= pad.y + PAD_H + 6 &&
-      ship.x >= pad.x && ship.x <= pad.x + pad.w && ship.vy>0){
-    const speed = Math.hypot(ship.vx, ship.vy);
-    const angleErr = Math.abs((ship.ang % TAU + TAU) % TAU);
-    const upright = Math.min(angleErr, Math.abs(TAU - angleErr)) * (180/Math.PI);
-    if (speed <= L.safeSpeed && upright <= L.safeAngle){
-      land();
-      for(let k=0;k<14;k++){
-        const a = rnd(-Math.PI,0);
-        const sp = rnd(20,80);
-        addParticle(ship.x + rnd(-10,10), pad.y+PAD_H,
-          Math.cos(a)*sp, Math.sin(a)*sp*0.4, rnd(0.3,0.7), rnd(1.5,3), "#cbbba0", 120);
+  // câmara
+  camX = clamp(ship.x - W*0.5, 0, Math.max(0, worldW - W));
+
+  // aterragem (pads)
+  if (ship.vy>0){
+    for (const p of pads){
+      if ((ship.y + SHIP_R) >= p.top && (ship.y + SHIP_R) <= p.top + PAD_H + 6 &&
+          ship.x >= p.x && ship.x <= p.x + p.w){
+        const speed=Math.hypot(ship.vx, ship.vy);
+        const angleErr=Math.abs((ship.ang%TAU+TAU)%TAU);
+        const upright=Math.min(angleErr, Math.abs(TAU-angleErr))*(180/Math.PI);
+        const velOK = speed <= p.safeSpeed;
+        const angOK = upright <= p.safeAngle;
+        if (velOK && angOK){
+          land(p);
+          for(let k=0;k<16;k++){ const a=rnd(-Math.PI,0), sp=rnd(20,80); addParticle(ship.x+rnd(-10,10), p.top+PAD_H, Math.cos(a)*sp, Math.sin(a)*sp*0.4, rnd(0.3,0.7), rnd(1.5,3), "#cbbba0", 120); }
+          return;
+        } else { crash(); return; }
       }
-      return;
-    } else { crash(); return; }
+    }
   }
 
+  // colisão terreno
   for(let i=0;i<terrain.length-1;i++){
     const a=terrain[i], b=terrain[i+1];
-    if ( (a.x>=pad.x && b.x<=pad.x+pad.w) || (b.x>=pad.x && a.x<=pad.x+pad.w) ){
-    } else {
-      if (distPointToSeg(ship.x, ship.y, a.x,a.y, b.x,b.y) <= SHIP_R){
-        crash(); return;
-      }
-    }
+    if (distPointToSeg(ship.x, ship.y, a.x,a.y, b.x,b.y) <= SHIP_R){ crash(); return; }
   }
 
+  // meteoritos
   updateMeteorites(dt, L);
 
-  ship.vx = clamp(ship.vx, -1000, 1000);
-  ship.vy = clamp(ship.vy, -1000, 1000);
+  ship.vx=clamp(ship.vx,-1000,1000); ship.vy=clamp(ship.vy,-1000,1000);
 
   updateParticles(dt);
 }
 
-function explodeAt(x,y){
-  for(let k=0;k<36;k++){
-    const a=rnd(0,TAU), sp=rnd(60,240);
-    addParticle(x, y, Math.cos(a)*sp, Math.sin(a)*sp, rnd(0.4,0.9), rnd(1.5,3.5), "#ff8844", 60);
-  }
-}
-function crash(){
-  if (state!==STATES.PLAY) return;
-  state = STATES.CRASH; ship.thrust=false; audio.thruster(false);
-  audio.init(); audio.boom();
-  explodeAt(ship.x, ship.y);
-}
-function land(){
-  state = STATES.LAND; ship.thrust=false; ship.vx=ship.vy=0; audio.thruster(false);
-  audio.init(); audio.beep(740,0.12); setTimeout(()=>audio.beep(880,0.12), 120);
+function explodeAt(x,y){ for(let k=0;k<36;k++){ const a=rnd(0,TAU), sp=rnd(60,240); addParticle(x,y, Math.cos(a)*sp, Math.sin(a)*sp, rnd(0.4,0.9), rnd(1.5,3.5), "#ff8844", 60); } }
+function crash(){ if(state!==STATES.PLAY) return; state=STATES.CRASH; ship.thrust=false; audio.thruster(false); audio.boom(); explodeAt(ship.x,ship.y); }
+function land(padHit){
+  state=STATES.LAND; ship.thrust=false; ship.vx=ship.vy=0; audio.thruster(false);
+  const seq = padHit.label==='Fácil' ? [660,784,880] : padHit.label==='Médio' ? [784,880,988] : [880,988,1175];
+  let delay=0; for(const f of seq){ setTimeout(()=>audio.beep(f,0.11,'square',0.35), delay); delay+=120; }
   saveBest(cur+1);
+  lastLandedPad = padHit;
+}
+let lastLandedPad=null;
+
+/* ===== Render ===== */
+function drawSpaceBg(){ const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,"#060913"); g.addColorStop(1,"#0b0f1a"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const seed=4321; let s=seed; const R=()=> (s=(s*9301+49297)%233280)/233280; ctx.globalAlpha=0.7; ctx.fillStyle="#bcd3ff";
+  for(let i=0;i<60;i++){ ctx.fillRect(R()*W, 40+R()*H*0.35, 1,1); } ctx.globalAlpha=1; }
+function roundRect(x,y,w,h,r){ const rr=Math.min(r,Math.abs(w)/2,Math.abs(h)/2); ctx.beginPath(); ctx.moveTo(x+rr,y); ctx.arcTo(x+w,y, x+w,y+h, rr); ctx.arcTo(x+w,y+h,x,y+h,rr); ctx.arcTo(x,y+h,x,y,rr); ctx.arcTo(x,y,x+w,y,rr); ctx.closePath(); }
+
+function drawTerrain(camX_){
+  ctx.save();
+  ctx.translate(-camX_, 0);
+  ctx.fillStyle="#1e2433"; ctx.beginPath(); ctx.moveTo(0,H);
+  for(const p of terrain) ctx.lineTo(p.x, p.y);
+  ctx.lineTo(worldW, H); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle="rgba(255,255,255,0.06)"; ctx.lineWidth=2;
+  for(let i=0;i<terrain.length-1;i++){ const a=terrain[i], b=terrain[i+1]; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
+  for(const p of pads){
+    ctx.globalAlpha=0.30; ctx.fillStyle="#000"; roundRect(p.x-6, p.top+PAD_H, p.w+12, 10, 4); ctx.fill(); ctx.globalAlpha=1;
+    ctx.fillStyle = (state===STATES.LAND && lastLandedPad===p) ? "#00d78f" : p.color;
+    roundRect(p.x, p.top, p.w, PAD_H, 3); ctx.fill();
+    ctx.fillStyle="#8892a8"; ctx.fillRect(p.x-6, p.top, 4, PAD_H+10); ctx.fillRect(p.x+p.w+2, p.top, 4, PAD_H+10);
+    const t=(Math.sin(time*6)+1)/2; ctx.globalAlpha=0.25+0.35*t; ctx.fillStyle="#8fe3ff"; roundRect(p.x, p.top-6, p.w, 4, 2); ctx.fill(); ctx.globalAlpha=1;
+    ctx.fillStyle="#cfe0ff"; ctx.font="12px system-ui"; ctx.textAlign="center";
+    ctx.fillText(`${p.label} — Vel ≤ ${p.safeSpeed} | Âng ≤ ${p.safeAngle}°`, p.x+p.w/2, p.top-10);
+  }
+  ctx.restore();
 }
 
-function drawSpaceBg(){
-  const g = ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,"#060913"); g.addColorStop(1,"#0b0f1a");
-  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
-  const seed=4321; let s=seed; const R=()=> (s=(s*9301+49297)%233280)/233280;
-  ctx.globalAlpha=0.7; ctx.fillStyle="#bcd3ff";
-  for(let i=0;i<60;i++){ ctx.fillRect(R()*W, 40+R()*H*0.35, 1,1); }
-  ctx.globalAlpha=1;
-}
-function roundRect(x,y,w,h,r){ const rr=Math.min(r, Math.abs(w)/2, Math.abs(h)/2);
-  ctx.beginPath(); ctx.moveTo(x+rr,y); ctx.arcTo(x+w,y, x+w,y+h, rr); ctx.arcTo(x+w,y+h, x,y+h, rr);
-  ctx.arcTo(x,y+h, x,y, rr); ctx.arcTo(x,y, x+w,y, rr); ctx.closePath();
-}
 function drawHUD(){
-  const speed = Math.hypot(ship.vx, ship.vy);
-  const angleErr = Math.abs((ship.ang % TAU + TAU) % TAU);
-  const upright = Math.min(angleErr, Math.abs(TAU - angleErr)) * (180/Math.PI);
-  ctx.globalAlpha=0.85; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(12,12,360,110,10); ctx.fill(); ctx.globalAlpha=1;
-  ctx.fillStyle="#cfe0ff"; ctx.font="14px system-ui, Segoe UI, Roboto, Arial";
-  ctx.fillText(currentLevel ? `${currentLevel.name}` : "—", 20, 32);
+  const speed=Math.hypot(ship.vx,ship.vy);
+  const angleErr=Math.abs((ship.ang%TAU+TAU)%TAU);
+  const upright=Math.min(angleErr, Math.abs(TAU-angleErr))*(180/Math.PI);
+  ctx.globalAlpha=0.85; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(12,12,390,118,10); ctx.fill(); ctx.globalAlpha=1;
+  ctx.fillStyle="#cfe0ff"; ctx.font="14px system-ui";
+  ctx.fillText(`${currentLevel ? currentLevel.name : "—"} — Modo: ${opts.mode} — Som: ${audio.enabled?'ON':'OFF'}`, 20, 32);
   ctx.fillStyle="#9ab0d6";
   ctx.fillText("Vel: " + speed.toFixed(1) + " px/s", 20, 54);
   ctx.fillText("Ângulo: " + upright.toFixed(1) + "°", 20, 74);
-  ctx.fillText("Combustível: " + (ship.fuel|0), 20, 94);
-
-  if (currentLevel){
-    const ok1 = speed <= currentLevel.safeSpeed;
-    const ok2 = upright <= currentLevel.safeAngle;
-    ctx.fillStyle = ok1 ? "#73f3b1" : "#ffb37a";
-    ctx.fillText("Lim. Vel: " + currentLevel.safeSpeed + " px/s", 200, 54);
-    ctx.fillStyle = ok2 ? "#73f3b1" : "#ffb37a";
-    ctx.fillText("Lim. Âng: " + currentLevel.safeAngle + "°", 200, 74);
+  ctx.fillText("Comb.: " + (ship.fuel|0), 20, 94);
+  ctx.fillText("Meteors: " + meteorites.length, 160, 94);
+  if(currentLevel){
+    ctx.fillStyle="#73f3b1"; ctx.fillText("Lim. base Vel: " + currentLevel.baseSpeed + " px/s", 200, 54);
+    ctx.fillStyle="#73f3b1"; ctx.fillText("Lim. base Âng: " + currentLevel.baseAngle + "°", 200, 74);
   }
+  drawMiniMap();
 }
-
-let menuButtons = [];
-function drawMenu(){
-  drawSpaceBg(); drawStars(); drawTitle();
-  const btnW = Math.min(380, W*0.8), btnH=46, gap=12;
-  const cx = W/2 - btnW/2;
-  let cy = H/2 - 120;
-  menuButtons = [];
-
-  addButton(cx, cy, btnW, btnH, "▶ Novo Jogo", ()=>{ startGame(0); }); cy+=btnH+gap;
-  const best = bestLevel();
-  if (best>0) { addButton(cx, cy, btnW, btnH, `⏩ Continuar (Nível ${best+1})`, ()=>{ startGame(best); }); cy+=btnH+gap; }
-  addButton(cx, cy, btnW, btnH, "🧹 Limpar Progresso", ()=>{ resetSave(); drawMenu(); }); cy+=btnH+gap;
-  addButton(cx, cy, btnW, btnH, "🔊 Alternar Som (S)", ()=>{ audio.init(); audio.toggleSfx(); });
-  cy+=btnH+gap;
-  addButton(cx, cy, btnW, btnH, "🎵 Alternar Música (M)", ()=>{ audio.init(); audio.toggleMusic(); });
-
-  for(const b of menuButtons){
-    ctx.globalAlpha=0.9; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(b.x,b.y,b.w,b.h,10); ctx.fill();
-    ctx.globalAlpha=1; ctx.strokeStyle="rgba(255,255,255,0.2)"; ctx.lineWidth=1.5; roundRect(b.x,b.y,b.w,b.h,10); ctx.stroke();
-    ctx.fillStyle="#cfe0ff"; ctx.font="16px system-ui, Segoe UI, Roboto, Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText(b.label, b.x+b.w/2, b.y+b.h/2);
+function drawMiniMap(){
+  const mw=Math.min(W-24, 280), mh=40, x= W - mw - 12, y=12;
+  ctx.globalAlpha=0.85; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(x,y,mw,mh,8); ctx.fill(); ctx.globalAlpha=1;
+  ctx.fillStyle="#2a3248"; roundRect(x+8,y+mh/2-3,mw-16,6,3); ctx.fill();
+  for(const p of pads){
+    const px = x+8 + (p.x/worldW)*(mw-16);
+    ctx.fillStyle=p.color; ctx.fillRect(px-2, y+mh/2-6, 4, 12);
   }
-
-  ctx.fillStyle="#9ab0d6"; ctx.font="14px system-ui"; ctx.textAlign="center";
-  ctx.fillText("Teclas: ←/→ rodar, ↑ motor, P pausa, R reinicia, S som, M música — Suporta toque 👍", W/2, H-30);
-}
-function drawTitle(){
-  ctx.fillStyle="#e7f0ff"; ctx.textAlign="center";
-  ctx.font="bold 42px system-ui, Segoe UI, Roboto, Arial";
-  ctx.fillText("MOON LANDER", W/2, 110);
-  ctx.font="18px system-ui, Segoe UI, Roboto, Arial"; ctx.fillStyle="#9ab0d6";
-  ctx.fillText("Níveis progressivos, terreno irregular, meteoritos e progresso guardado", W/2, 138);
-}
-function drawStars(){
-  ctx.globalAlpha=0.7; ctx.fillStyle="#bcd3ff";
-  const seed=4321; let s=seed; const R=()=> (s=(s*9301+49297)%233280)/233280;
-  for(let i=0;i<60;i++){ ctx.fillRect(R()*W, 40+R()*H*0.35, 1,1); }
-  ctx.globalAlpha=1;
-}
-function addButton(x,y,w,h,label,action){ menuButtons.push({x,y,w,h,label,action}); }
-canvas.onclick = (e)=>{
-  if (state!==STATES.MENU) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left, y = e.clientY - rect.top;
-  for(const b of menuButtons){
-    if (x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h){ audio.init(); audio.musicStart(); b.action(); return; }
-  }
-  startFromMenuDefault();
-};
-function startFromMenuDefault(){
-  audio.init(); audio.musicStart();
-  const best = bestLevel();
-  if (best>0) startGame(best); else startGame(0);
+  const sx = x+8 + (ship.x/worldW)*(mw-16);
+  ctx.fillStyle="#bcd3ff"; ctx.beginPath(); ctx.arc(sx, y+mh/2, 4, 0, TAU); ctx.fill();
 }
 
 function drawTouchButtons(){
-  const g = btnGeom();
-  ctx.save(); ctx.globalAlpha = 0.8;
-  function drawBtn(c, label){
-    ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, TAU); ctx.fillStyle = "rgba(255,255,255,0.08)"; ctx.fill();
-    ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.stroke();
-    ctx.fillStyle = "#cfe0ff"; ctx.font = "bold 20px system-ui, Segoe UI, Roboto, Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(label, c.x, c.y);
-  }
-  drawBtn(g.left,  "↺");
-  drawBtn(g.right, "↻");
-  drawBtn(g.thrust,"▲");
-  ctx.restore();
+  const g=btnGeom(); ctx.save(); ctx.globalAlpha=0.8;
+  const drawBtn=(c,l)=>{ ctx.beginPath(); ctx.arc(c.x,c.y,c.r,0,TAU); ctx.fillStyle="rgba(255,255,255,0.08)"; ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle="rgba(255,255,255,0.25)"; ctx.stroke();
+    ctx.fillStyle="#cfe0ff"; ctx.font="bold 20px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(l,c.x,c.y);
+  };
+  drawBtn(g.left,"↺"); drawBtn(g.right,"↻"); drawBtn(g.thrust,"▲"); ctx.restore();
 }
 
-/* ========= Render principal ========= */
 function overlay(title, subtitle){
-  ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(0,0,W,H);
-  ctx.fillStyle="#e7f0ff"; ctx.textAlign="center";
-  ctx.font="bold 36px system-ui, Segoe UI, Roboto, Arial"; ctx.fillText(title, W/2, H/2 - 10);
-  ctx.font="16px system-ui, Segoe UI, Roboto, Arial"; ctx.fillStyle="#b9c7e6";
-  const lines = (subtitle||"").split("\n"); let y = H/2 + 18; for(const ln of lines){ ctx.fillText(ln, W/2, y); y+=22; }
-  ctx.restore();
+  ctx.save(); ctx.fillStyle="rgba(0,0,0,0.45)"; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#e7f0ff"; ctx.textAlign="center"; ctx.font="bold 36px system-ui"; ctx.fillText(title, W/2, H/2 - 10);
+  ctx.font="16px system-ui"; ctx.fillStyle="#b9c7e6"; const lines=(subtitle||"").split("\n"); let yy=H/2+18; for(const ln of lines){ ctx.fillText(ln, W/2, yy); yy+=22; } ctx.restore();
 }
 function drawPadOverlay(){
-  if (state===STATES.PAUSE) overlay("PAUSA", "Prima P para continuar");
-  if (state===STATES.CRASH) overlay("Explodiu 💥", "Prima R para tentar de novo.");
-  if (state===STATES.LAND){
-    overlay("Aterragem bem-sucedida! 🌕", "Enter/Click: próximo nível");
-  }
-  if (state===STATES.OVER) overlay("Concluíste todos os níveis! 🏁", "Prima R para recomeçar.");
+  if (state===STATES.PAUSE) overlay("PAUSA","Prima P para continuar");
+  if (state===STATES.CRASH) overlay("Explodiu 💥","Prima R para tentar de novo.");
+  if (state===STATES.LAND)  overlay(`Aterragem no pad ${lastLandedPad?.label}! 🌕`,"Enter/Click: próximo nível");
+  if (state===STATES.OVER)  overlay("Concluíste todos os níveis! 🏁","Prima R para recomeçar.");
 }
-addEventListener('keydown', (e)=>{
-  if (state===STATES.LAND && (e.key==='Enter'||e.key===' ')){ e.preventDefault(); nextLevel(); }
-});
 
+/* ===== Menu ===== */
+let menuButtons=[];
+function drawMenu(){
+  drawSpaceBg(); drawMenuTitle();
+  const btnW=Math.min(420, W*0.85), btnH=46, gap=12, cx=W/2-btnW/2; let cy=H/2-130; menuButtons=[];
+  addButton(cx,cy,btnW,btnH,"▶ Novo Jogo",()=>startGame(0)); cy+=btnH+gap;
+  const best=bestLevel(); if (best>0){ addButton(cx,cy,btnW,btnH,`⏩ Continuar (Nível ${best+1})`,()=>startGame(best)); cy+=btnH+gap; }
+  addButton(cx,cy,btnW,btnH,`🎮 Modo: ${opts.mode} (M)`,()=>{ toggleMode(); drawMenu(); }); cy+=btnH+gap;
+  addButton(cx,cy,btnW,btnH,"🔊 Som: ON/OFF (S)", ()=>toggleSound()); cy+=btnH+gap;
+  addButton(cx,cy,btnW,btnH,"🧹 Limpar Progresso", ()=>{ localStorage.removeItem(SAVE_KEY); drawMenu(); });
+  for(const b of menuButtons){ ctx.globalAlpha=0.9; ctx.fillStyle="rgba(6,9,19,0.55)"; roundRect(b.x,b.y,b.w,b.h,10); ctx.fill();
+    ctx.globalAlpha=1; ctx.strokeStyle="rgba(255,255,255,0.2)"; ctx.lineWidth=1.5; roundRect(b.x,b.y,b.w,b.h,10); ctx.stroke();
+    ctx.fillStyle="#cfe0ff"; ctx.font="16px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(b.label, b.x+b.w/2, b.y+b.h/2);
+  }
+  ctx.fillStyle="#9ab0d6"; ctx.font="14px system-ui"; ctx.textAlign="center";
+  ctx.fillText("Teclas: ←/→ rodar, ↑ motor, P pausa, R reinicia, S som, M modo — Toque suportado 👍", W/2, H-30);
+}
+function drawMenuTitle(){
+  ctx.fillStyle="#e7f0ff"; ctx.textAlign="center"; ctx.font="bold 42px system-ui"; ctx.fillText("MOON LANDER", W/2, 110);
+  ctx.font="18px system-ui"; ctx.fillStyle="#9ab0d6";
+  ctx.fillText("Terreno amplo com múltiplos locais de aterragem e dificuldades", W/2, 138);
+}
+function addButton(x,y,w,h,label,action){ menuButtons.push({x,y,w,h,label,action}); }
+canvas.onclick=(e)=>{ if(state!==STATES.MENU && state!==STATES.LAND) return;
+  const rect=canvas.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  if (state===STATES.MENU){ for(const b of menuButtons){ if(x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h){ b.action(); return; } } startFromMenuDefault(); }
+  else if (state===STATES.LAND){ nextLevel(); }
+};
+function startFromMenuDefault(){ const best=bestLevel(); startGame(best>0?best:0); }
+function nextLevel(){ cur++; if(cur>=levels.length){ state=STATES.OVER; } else { loadLevel(cur); state=STATES.PLAY; } }
+
+/* ===== Render principal ===== */
 function render(){
   if (state===STATES.MENU){ drawMenu(); return; }
   drawSpaceBg();
-  drawTerrain();
-  drawPad();
-  drawMeteorites();
-  drawShip();
-  drawParticles();
+  drawTerrain(camX);
+  drawMeteorites(camX);
+  drawShip(camX);
+  drawParticles(camX);
   drawHUD();
   drawTouchButtons();
   drawPadOverlay();
 }
 
-function nextLevel(){
-  cur++;
-  if (cur>=levels.length){ state = STATES.OVER; }
-  else { loadLevel(cur); state = STATES.PLAY; }
-}
-
-/* ========= Start ========= */
-state = STATES.MENU;
+/* ===== Start ===== */
+state=STATES.MENU;
 drawMenu();
+
+/* ===== Helpers visuais ===== */
+function drawSpaceBg(){ const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,"#060913"); g.addColorStop(1,"#0b0f1a"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const seed=4321; let s=seed; const R=()=> (s=(s*9301+49297)%233280)/233280; ctx.globalAlpha=0.7; ctx.fillStyle="#bcd3ff";
+  for(let i=0;i<60;i++){ ctx.fillRect(R()*W, 40+R()*H*0.35, 1,1); } ctx.globalAlpha=1;
+}
 
 })(); // IIFE
 </script>
 
 <script>
-// PWA: registar service worker
+// PWA
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
-  });
+  window.addEventListener('load', () => { navigator.serviceWorker.register('./service-worker.js').catch(()=>{}); });
 }
 </script>
 </body>
