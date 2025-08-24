@@ -222,63 +222,82 @@ const FUEL_BURN=12;
 
 const ship={ x:0,y:0,vx:0,vy:0,ang:0,angVel:0,left:false,right:false,thrust:false,fuel:100, alive:true };
 
-/* ===== CÂMARA com ZOOM ===== */
+/* ===== CÂMARA com ZOOM (cinemático) ===== */
 const cam = {
-  x:0, y:0, scale:1, targetScale:1,
+  x:0, y:0, vx:0, vy:0,   // velocidades da câmara (mola vertical)
+  scale:1, targetScale:1,
   min:0.65, max:1.5,
   apply(){ ctx.save(); ctx.scale(this.scale, this.scale); ctx.translate(-this.x, -this.y); },
   restore(){ ctx.restore(); }
 };
 
-// calcula targetScale: afasta quando longe de pads, aproxima quando perto
+// ---- computeCamera cinemático ----
 function computeCamera(dt){
-  // seguir posição
-  const viewW = W / cam.scale, viewH = H / cam.scale;
+  cam.min = 0.70;
+  cam.max = 1.60;
 
-  // alvo base: centro na nave
-  let targetX = ship.x - viewW*0.5;
-  let targetY = ship.y - viewH*0.45;
-
-  // zoom em função da proximidade a um pad
-  let nearest = null, bestD = Infinity;
+  // pad mais próximo (métrica normalizada)
+  let nearest=null, bestD=Infinity;
   for (const p of pads){
     const cx = p.x + p.w/2, cy = p.top;
-    const dx = Math.abs(ship.x - cx);
-    const dy = Math.abs(ship.y - (cy-20));
-    const d = dx + dy*0.7; // métrica simples
-    if (d < bestD){ bestD = d; nearest = p; }
+    const nx = (ship.x - cx) / Math.max(80, p.w*0.6);
+    const ny = (ship.y - (cy - 20)) / 120;
+    const d  = Math.hypot(nx, ny*0.8);
+    if (d < bestD){ bestD=d; nearest=p; }
   }
-
-  // alvo de escala
-  // longe de pads -> ver amplo (0.75~0.9) ; perto -> aproximar (1.2~1.4)
-  let tScale;
+  // histerese perto/longe
+  if (cam._near === undefined) cam._near = false;
+  const NEAR_ENTER=0.90, NEAR_EXIT=1.20;
   if (nearest){
-    const dx = Math.abs(ship.x - (nearest.x + nearest.w/2));
-    const dy = Math.abs(ship.y - nearest.top);
-    const norm = clamp( (dx+dy*0.7) / 420, 0, 1); // 0 perto, 1 longe
-    const farScale = 0.8;      // afastado
-    const nearScale = 1.35;    // aproximado
-    tScale = lerp(nearScale, farScale, norm);
-  } else {
-    tScale = 0.85;
-  }
+    if (!cam._near && bestD < NEAR_ENTER) cam._near = true;
+    if ( cam._near && bestD > NEAR_EXIT ) cam._near = false;
+  } else cam._near = false;
 
-  // também afasta se nave for muito rápida (contexto situacional)
+  // base do zoom + contexto
+  const baseNear=1.40, baseFar=0.80;
+  let targetScale = cam._near ? baseNear : baseFar;
+
+  const altNorm = clamp((H - ship.y) / H, 0, 1);
+  targetScale *= (1 - altNorm*0.15);                 // altitude
+  const TWO_PI=Math.PI*2;
+  const a = Math.abs((ship.ang % TWO_PI + TWO_PI) % TWO_PI);
+  const uprightDeg = Math.min(a, Math.abs(TWO_PI - a))*(180/Math.PI);
+  const tiltOut = clamp((uprightDeg - 6) / 40, 0, 1);
+  targetScale *= (1 - tiltOut*0.12);                 // inclinação
   const speed = Math.hypot(ship.vx, ship.vy);
-  const speedBoost = clamp((speed-120)/180, 0, 0.25); // até +25% afastamento
-  tScale = tScale * (1 - speedBoost);
+  const speedOut = clamp((speed - 120)/220, 0, 0.15);
+  targetScale *= (1 - speedOut);                     // velocidade
 
-  cam.targetScale = clamp(tScale, cam.min, cam.max);
-  cam.scale = lerp(cam.scale, cam.targetScale, 0.04);
+  targetScale = clamp(targetScale, cam.min, cam.max);
+  cam.targetScale = targetScale;
+  const SCALE_LERP=0.025;
+  cam.scale = lerp(cam.scale, cam.targetScale, SCALE_LERP);
 
-  // recomputar dimensões com nova escala
+  // look-ahead dinâmico (↑ com velocidade e nível)
+  const difficultyBoost = currentLevel ? clamp((currentLevel.idx-1)/19, 0, 1) : 0;
+  const laFactor = 0.20 + clamp((speed-90)/180, 0, 0.35) + difficultyBoost*0.10;
+  const laCap    = 180 + (currentLevel ? currentLevel.idx*8 : 0);
+  const lookAheadX = clamp(ship.vx * laFactor, -laCap, laCap);
+
   const vW = W / cam.scale, vH = H / cam.scale;
-  targetX = clamp(ship.x - vW*0.5, 0, Math.max(0, worldW - vW));
-  // seguir vertical com suavidade (mundo tem limites superior/inferior “virtuais”)
-  targetY = clamp(ship.y - vH*0.45, 0, Math.max(0, H - vH));
+  const targetX = clamp(ship.x + lookAheadX - vW*0.5, 0, Math.max(0, worldW - vW));
+  const rawTargetY = ship.y - vH*0.45;
+  const targetY = clamp(rawTargetY, 0, Math.max(0, H - vH));
 
-  cam.x = lerp(cam.x, targetX, 0.08);
-  cam.y = lerp(cam.y, targetY, 0.10);
+  // follow vertical por mola (crítico)
+  const omega=5.0, zeta=1.0;
+  const ay = omega*omega*(targetY - cam.y) - 2*zeta*omega*cam.vy;
+  cam.vy += ay*dt;
+  cam.y  += cam.vy*dt;
+
+  // horizontal por lerp suave
+  const PAN_LERP_X=0.06;
+  if (isNaN(cam.x)) cam.x = targetX;
+  cam.x = lerp(cam.x, targetX, PAN_LERP_X);
+
+  // clamp final
+  cam.x = clamp(cam.x, 0, Math.max(0, worldW - vW));
+  cam.y = clamp(cam.y, 0, Math.max(0, H - vH));
 }
 
 /* ===== Estados / Níveis ===== */
@@ -552,27 +571,6 @@ function drawMiniMap(){
   const sx = x+8 + (ship.x/worldW)*(mw-16); ctx.fillStyle="#bcd3ff"; ctx.beginPath(); ctx.arc(sx, y+mh/2, 4, 0, TAU); ctx.fill();
 }
 
-function drawTouchButtons(){
-  const g=btnGeom(); ctx.save(); ctx.globalAlpha=0.8;
-  const drawBtn=(c,l)=>{ ctx.beginPath(); ctx.arc(c.x,c.y,c.r,0,TAU); ctx.fillStyle="rgba(255,255,255,0.08)"; ctx.fill();
-    ctx.lineWidth=2; ctx.strokeStyle="rgba(255,255,255,0.25)"; ctx.stroke();
-    ctx.fillStyle="#cfe0ff"; ctx.font="bold 20px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(l,c.x,c.y);
-  };
-  drawBtn(g.left,"↺"); drawBtn(g.right,"↻"); drawBtn(g.thrust,"▲"); ctx.restore();
-}
-
-function overlay(title, subtitle){
-  ctx.save(); ctx.fillStyle="rgba(0,0,0,0.45)"; ctx.fillRect(0,0,W,H);
-  ctx.fillStyle="#e7f0ff"; ctx.textAlign="center"; ctx.font="bold 36px system-ui"; ctx.fillText(title, W/2, H/2 - 10);
-  ctx.font="16px system-ui"; ctx.fillStyle="#b9c7e6"; const lines=(subtitle||"").split("\n"); let yy=H/2+18; for(const ln of lines){ ctx.fillText(ln, W/2, yy); yy+=22; } ctx.restore();
-}
-function drawPadOverlay(){
-  if (state===STATES.PAUSE) overlay("PAUSA","Prima P para continuar");
-  if (state===STATES.CRASH) overlay("Explodiu 💥","Prima R para tentar de novo.");
-  if (state===STATES.LAND)  overlay(`Aterragem no pad ${lastLandedPad?.label}! 🌕`,"Enter/Click: próximo nível");
-  if (state===STATES.OVER)  overlay("Concluíste todos os níveis! 🏁","Prima R para recomeçar.");
-}
-
 /* ===== Menus ===== */
 let menuButtons=[], levelButtons=[];
 function drawMenu(){
@@ -622,11 +620,9 @@ function drawLevelSelect(){
       ctx.fillText(`Nível ${n}`, x+cellW/2, y+cellH/2);
     }
   }
-  // voltar
   ctx.fillStyle="#9ab0d6"; ctx.font="14px system-ui"; ctx.textAlign="center";
   ctx.fillText("Clique/toque num nível desbloqueado • Esc/Voltar para o menu", W/2, H-30);
 }
-let menuButtons=[], levelButtons=[];
 function addButton(x,y,w,h,label,action){ menuButtons.push({x,y,w,h,label,action}); }
 canvas.onclick=(e)=>{
   const rect=canvas.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
@@ -655,12 +651,12 @@ function render(){
   drawSpaceBg();
 
   // mundo com câmara (zoom + pan)
-  withCamera(()=>{
-    drawTerrain();
-    drawMeteoritesCam();
-    drawShip();
-    drawParticles();
-  });
+  cam.apply();
+  drawTerrain();
+  drawMeteoritesCam();
+  drawShip();
+  drawParticles();
+  cam.restore();
 
   // HUD fixo
   drawHUD();
